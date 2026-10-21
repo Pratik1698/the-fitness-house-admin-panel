@@ -1,0 +1,118 @@
+@import "tailwindcss";
+
+/* ============================================
+   THE FITNESS HOUSE — Design System Tokens & Base
+   ============================================ */
+
+@layer theme {
+  :root {
+    --color-bg-main: #F5F7F8;
+    --color-bg-card: #FFFFFF;
+    --color-bg-sidebar: #FFFFFF;
+    --color-text-primary: #25313B;
+    --color-text-secondary: #64717B;
+    --color-border: #E1E6E9;
+    --color-border-subtle: #EEF2F4;
+    --color-accent: #16845B;
+    --color-accent-light: #E8F5EE;
+    --color-accent-hover: #12704D;
+    --color-warning: #A66A00;
+    --color-warning-bg: #FFF2D8;
+    --color-error: #B42318;
+    --color-error-bg: #FCE9E9;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+}
+
+@layer base {
+  html {
+    font-size: 16px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background-color: #F5F7F8;
+    color: #25313B;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* Form control defaults */
+  input, select, textarea, button {
+    font-family: inherit;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #CBD5E1;
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #94A3B8;
+  }
+
+  /* Focus ring */
+  *:focus-visible {
+    outline: 2px solid #16845B;
+    outline-offset: 2px;
+  }
+}
+
+/* Custom utility classes */
+@layer utilities {
+  .tabular-nums {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ============================================
+   PRINT STYLES FOR PAYMENT RECEIPTS
+   ============================================ */
+@media print {
+  /* Hide all app chrome, sidebar, navigation, and modal overlays */
+  body {
+    background: white !important;
+    color: #111 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  body * {
+    visibility: hidden;
+  }
+
+  /* Only display the designated receipt element */
+  #printable-receipt,
+  #printable-receipt * {
+    visibility: visible;
+  }
+
+  #printable-receipt {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 20px 24px !important;
+    box-shadow: none !important;
+    border: none !important;
+    background: white !important;
+  }
+
+  /* Hide print buttons inside the receipt */
+  .no-print,
+  .no-print * {
+    display: none !important;
+    visibility: hidden !important;
+  }
+}
