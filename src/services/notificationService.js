@@ -1,4 +1,5 @@
 import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { calculateNotificationDaysRemaining, getLocalDateString } from '../utils/memberUtils';
 
 /**
  * Notification & Outstanding Payments Service
@@ -36,36 +37,44 @@ export async function getNotifications() {
       };
     }
 
-    const normalized = (data || []).map((row) => ({
-      id: row.id,
-      memberId: row.member_id,
-      subscriptionId: row.subscription_id,
-      memberCode: row.member_code || '',
-      memberName: row.member_name || 'Member',
-      phone: row.member_phone || '',
-      planName: row.plan_name || 'Plan',
-      subscriptionStatus: row.subscription_status || 'active',
-      startDate: row.start_date || '',
-      expiryDate: row.expiry_date || '',
-      currentBalance: Number(row.current_balance || 0),
-      notificationType: row.notification_type,
-      title: row.title,
-      message: row.message,
-      daysRemaining: row.days_remaining,
-      targetDate: row.target_date,
-      channel: row.channel || 'In-App',
-      status: row.status, // 'unread' | 'read' | 'archived'
-      isRead: row.status === 'read',
-      readAt: row.read_at,
-      readBy: row.read_by,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      isSuperseded: Boolean(row.is_superseded),
-      isWhatsAppSent: Boolean(row.whatsapp_sent_at),
-      whatsappSentAt: row.whatsapp_sent_at || null,
-      whatsappSentBy: row.whatsapp_sent_by || null,
-      whatsappSentByName: row.whatsapp_sent_by_name || null,
-    }));
+    const todayStr = getLocalDateString();
+    const normalized = (data || []).map((row) => {
+      const targetDate = row.target_date || row.expiry_date;
+      const daysRemaining = (targetDate && typeof targetDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(targetDate))
+        ? calculateNotificationDaysRemaining({ targetDate }, todayStr)
+        : row.days_remaining;
+
+      return {
+        id: row.id,
+        memberId: row.member_id,
+        subscriptionId: row.subscription_id,
+        memberCode: row.member_code || '',
+        memberName: row.member_name || 'Member',
+        phone: row.member_phone || '',
+        planName: row.plan_name || 'Plan',
+        subscriptionStatus: row.subscription_status || 'active',
+        startDate: row.start_date || '',
+        expiryDate: row.expiry_date || '',
+        currentBalance: Number(row.current_balance || 0),
+        notificationType: row.notification_type,
+        title: row.title,
+        message: row.message,
+        daysRemaining,
+        targetDate: row.target_date,
+        channel: row.channel || 'In-App',
+        status: row.status, // 'unread' | 'read' | 'archived'
+        isRead: row.status === 'read',
+        readAt: row.read_at,
+        readBy: row.read_by,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        isSuperseded: Boolean(row.is_superseded),
+        isWhatsAppSent: Boolean(row.whatsapp_sent_at),
+        whatsappSentAt: row.whatsapp_sent_at || null,
+        whatsappSentBy: row.whatsapp_sent_by || null,
+        whatsappSentByName: row.whatsapp_sent_by_name || null,
+      };
+    });
 
     return { data: normalized, error: null };
   } catch (err) {

@@ -20,6 +20,9 @@ import {
   generateNotificationMessage,
   normalizeIndianMobile,
   DEFAULT_GYM_PHONE,
+  getLocalDateString,
+  calculateNotificationDaysRemaining,
+  formatDaysRemainingLabel,
 } from '../utils/memberUtils';
 
 export default function Notifications() {
@@ -55,6 +58,18 @@ export default function Notifications() {
   const [previewChannel, setPreviewChannel] = useState('WhatsApp');
   const [notice, setNotice] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+
+  // Current local date in Asia/Kolkata timezone (dynamically maintained across midnight)
+  const [currentDate, setCurrentDate] = useState(() => getLocalDateString());
+
+  useEffect(() => {
+    // Check every 30 seconds if local date in Asia/Kolkata has changed (e.g. crossing midnight)
+    const interval = setInterval(() => {
+      const freshDate = getLocalDateString();
+      setCurrentDate(prev => (prev !== freshDate ? freshDate : prev));
+    }, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Sync query param changes
   useEffect(() => {
@@ -302,6 +317,7 @@ export default function Notifications() {
   // Open Preview Modal with rich personalized copy
   const handleOpenPreview = (item) => {
     setPreviewItem(item);
+    const dynamicDaysLeft = calculateNotificationDaysRemaining(item, currentDate);
     const memberObj = (members || []).find(m => m.id === item.memberId) || {
       name: item.memberName,
       phone: item.phone,
@@ -312,7 +328,7 @@ export default function Notifications() {
     const richMsg = generateNotificationMessage({
       type: item.notificationType,
       member: memberObj,
-      daysLeft: item.daysRemaining,
+      daysLeft: dynamicDaysLeft !== null ? dynamicDaysLeft : item.daysRemaining,
       balance: item.currentBalance,
       gymPhone: gymInfo?.phone || DEFAULT_GYM_PHONE,
     });
@@ -781,6 +797,8 @@ export default function Notifications() {
                   const isUnread = item.status === 'unread' || (!item.isRead && item.status !== 'read');
                   const isExpiry = (item.notificationType || '').includes('expir') || item.notificationType === 'expired';
                   const isPayment = (item.notificationType || '').includes('pay') || (item.notificationType || '').includes('due');
+                  const effectiveDays = calculateNotificationDaysRemaining(item, currentDate);
+                  const daysLabel = formatDaysRemainingLabel(effectiveDays);
 
                   return (
                     <tr
@@ -866,13 +884,9 @@ export default function Notifications() {
                         <span className="font-semibold block text-[#25313B]">
                           {item.targetDate || item.scheduledDate || 'N/A'}
                         </span>
-                        {item.daysRemaining !== undefined && item.daysRemaining !== null && (
+                        {daysLabel && (
                           <span className="text-[11px] text-[#A66A00] font-medium">
-                            {item.daysRemaining < 0
-                              ? `Expired ${Math.abs(item.daysRemaining)}d ago`
-                              : item.daysRemaining === 0
-                              ? 'Expires Today'
-                              : `${item.daysRemaining} days remaining`}
+                            {daysLabel}
                           </span>
                         )}
                       </td>

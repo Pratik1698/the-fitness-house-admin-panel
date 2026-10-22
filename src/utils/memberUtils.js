@@ -4,15 +4,54 @@
  */
 
 /**
- * Returns a date string formatted as YYYY-MM-DD in the local timezone.
- * Avoids UTC timezone conversion shifts.
+ * Returns a date string formatted as YYYY-MM-DD in the Asia/Kolkata timezone by default.
+ * Handles Date objects, timestamps, ISO strings, or YYYY-MM-DD strings.
+ * Using Asia/Kolkata guarantees alignment with the gym facility schedule and database midnight boundaries.
  */
-export function getLocalDateString(date = new Date()) {
+export function getLocalDateString(date = new Date(), timeZone = 'Asia/Kolkata') {
+  if (!date) return '';
+  if (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    return date;
+  }
   const d = new Date(date);
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  if (isNaN(d.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(d);
+}
+
+/**
+ * Formats a numeric daysRemaining count into user-friendly UI copy:
+ * - < 0: 'Expired Xd ago'
+ * - === 0: 'Expires Today'
+ * - > 0: 'X days remaining'
+ */
+export function formatDaysRemainingLabel(daysRemaining) {
+  if (daysRemaining === undefined || daysRemaining === null) return null;
+  if (daysRemaining < 0) {
+    return `Expired ${Math.abs(daysRemaining)}d ago`;
+  }
+  if (daysRemaining === 0) {
+    return 'Expires Today';
+  }
+  return `${daysRemaining} days remaining`;
+}
+
+/**
+ * Calculates current days remaining for a notification item dynamically
+ * based on its targetDate, expiryDate, or scheduledDate relative to today.
+ * Falls back to item.daysRemaining if no date is present.
+ */
+export function calculateNotificationDaysRemaining(item, todayStr = getLocalDateString()) {
+  if (!item) return null;
+  const targetDate = item.targetDate || item.expiryDate || item.scheduledDate;
+  if (targetDate && typeof targetDate === 'string' && /^\d{4}-\d{2}-\d{2}/.test(targetDate)) {
+    return getDaysDifference(targetDate.slice(0, 10), todayStr);
+  }
+  return item.daysRemaining ?? null;
 }
 
 /**
