@@ -4,7 +4,7 @@ import {
   AlertTriangle, Bell, PhoneCall, BarChart3, Settings,
   LogOut, X
 } from 'lucide-react';
-import { useAuth } from '../../context/AppContext';
+import { useApp } from '../../context/AppContext';
 
 const navGroups = [
   {
@@ -37,7 +37,7 @@ const navGroups = [
 export function Sidebar({ isOpen, onToggle }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, role, logout } = useAuth();
+  const { user, role, logout, gymInfo } = useApp();
 
   const isActive = (path) => {
     if (path === '/') return location.pathname === '/';
@@ -74,10 +74,10 @@ export function Sidebar({ isOpen, onToggle }) {
             </div>
             <div>
               <h1 className="text-sm font-bold text-[#25313B] tracking-tight leading-none">
-                THE FITNESS HOUSE
+                {gymInfo?.name ? gymInfo.name.toUpperCase() : 'THE FITNESS HOUSE'}
               </h1>
               <p className="text-[11px] font-medium text-[#64717B] mt-1">
-                Gym Management · Arag
+                {gymInfo?.tagline || 'Gym Management · Arag'}
               </p>
             </div>
           </div>

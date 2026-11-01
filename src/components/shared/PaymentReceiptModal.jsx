@@ -4,12 +4,20 @@ import { Button } from '../ui/Button';
 import { Badge, StatusBadge } from '../ui/Badge';
 import { Printer, CheckCircle2, ShieldCheck, Dumbbell } from 'lucide-react';
 import { formatINR, getPaymentPurpose, DEFAULT_GYM_PHONE, CANONICAL_GYM_CONTACT } from '../../utils/memberUtils';
+import { useApp } from '../../context/AppContext';
 
 export function PaymentReceiptModal({ isOpen, onClose, payment, member }) {
   if (!payment) return null;
 
+  const { gymInfo } = useApp();
   const purpose = getPaymentPurpose(payment);
   const remainingBal = member ? member.balance : 0;
+
+  const gymName = gymInfo?.name || 'THE FITNESS HOUSE';
+  const gymTagline = gymInfo?.tagline || 'Arag Gym & Fitness Center';
+  const gymAddress = gymInfo?.address || CANONICAL_GYM_CONTACT.address;
+  const gymPhone = gymInfo?.phone || DEFAULT_GYM_PHONE;
+  const gymEmail = gymInfo?.email || CANONICAL_GYM_CONTACT.email;
 
   const handlePrint = () => {
     window.print();
@@ -49,18 +57,18 @@ export function PaymentReceiptModal({ isOpen, onClose, payment, member }) {
               </div>
               <div>
                 <h3 className="text-lg font-black tracking-tight text-[#16845B]">
-                  THE FITNESS HOUSE
+                  {gymName}
                 </h3>
                 <p className="text-[11px] font-medium text-[#64717B] -mt-0.5">
-                  Arag Gym & Fitness Center
+                  {gymTagline}
                 </p>
               </div>
             </div>
             <p className="text-xs text-[#64717B] mt-2">
-              {CANONICAL_GYM_CONTACT.address}
+              {gymAddress}
             </p>
             <p className="text-xs text-[#64717B]">
-              Helpline: {DEFAULT_GYM_PHONE} • Email: {CANONICAL_GYM_CONTACT.email}
+              Helpline: {gymPhone} • Email: {gymEmail}
             </p>
           </div>
 
@@ -166,9 +174,8 @@ export function PaymentReceiptModal({ isOpen, onClose, payment, member }) {
             <div className="flex justify-between text-xs text-[#64717B] border-t border-[#E1E6E9] pt-1.5">
               <span>Remaining Member Dues:</span>
               <span
-                className={`font-semibold tabular-nums ${
-                  remainingBal > 0 ? 'text-[#A66A00]' : 'text-[#16845B]'
-                }`}
+                className={`font-semibold tabular-nums ${remainingBal > 0 ? 'text-[#A66A00]' : 'text-[#16845B]'
+                  }`}
               >
                 {remainingBal > 0 ? formatINR(remainingBal) : '₹0 (No Dues)'}
               </span>
@@ -187,7 +194,7 @@ export function PaymentReceiptModal({ isOpen, onClose, payment, member }) {
             <div className="border-b border-[#25313B]/40 pb-6 mb-1 text-[10px] text-[#64717B] italic">
               Authorized Signatory
             </div>
-            <p className="text-[11px] font-bold text-[#25313B]">The Fitness House</p>
+            <p className="text-[11px] font-bold text-[#25313B]">{gymName}</p>
           </div>
         </div>
       </div>

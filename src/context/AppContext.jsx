@@ -49,6 +49,10 @@ import {
 } from '../services/followupService';
 import { isSupabaseConfigured } from '../services/supabaseClient';
 import {
+  fetchGymInfo as fetchGymInfoService,
+  updateGymInfo as updateGymInfoService,
+} from '../services/gymInfoService';
+import {
   MEMBERS,
   PAYMENTS,
   CHECKINS,
@@ -93,19 +97,25 @@ export function AppProvider({ children }) {
   const [ptClients, setPtClients] = useState(() => loadFromStorage(STORAGE_KEYS.PT_CLIENTS, PT_CLIENTS));
   const [ptSessions, setPtSessions] = useState(() => loadFromStorage(STORAGE_KEYS.PT_SESSIONS, PT_SESSIONS));
   const [notifications, setNotifications] = useState(() => loadFromStorage(STORAGE_KEYS.NOTIFICATIONS, NOTIFICATIONS_DATA));
+  // gymInfo: for unauthenticated/demo mode, seed from localStorage (fallback to GYM_INFO constant).
+  // For authenticated users, Supabase is the authoritative source — see fetchGymInfo() below.
   const [gymInfo, setGymInfo] = useState(() => {
-    const loaded = loadFromStorage(STORAGE_KEYS.GYM_INFO, GYM_INFO);
-    return {
-      ...loaded,
-      phone: GYM_INFO.phone,
-      whatsapp: GYM_INFO.whatsapp,
-      email: GYM_INFO.email,
-      location: GYM_INFO.location,
-      address: GYM_INFO.address,
-      ownerName: GYM_INFO.ownerName,
-      headCoach: GYM_INFO.headCoach,
-    };
+    if (!isSupabaseConfigured) {
+      // Offline demo mode: use localStorage with GYM_INFO constant as fallback
+      return loadFromStorage(STORAGE_KEYS.GYM_INFO, GYM_INFO);
+    }
+    // Authenticated mode: start with GYM_INFO constant as a placeholder until
+    // the real Supabase record is loaded. localStorage is NOT consulted so stale
+    // browser data can never override the database.
+    return { ...GYM_INFO };
   });
+
+  // Supabase Gym Info State (Phase 1 — Gym Profile & Info synchronization)
+  const [gymInfoLoading, setGymInfoLoading] = useState(false);
+  const [gymInfoError, setGymInfoError] = useState(null);
+  // Stores the DB-assigned UUID of the gym_info singleton row — required for targeted updates.
+  const [gymInfoDbId, setGymInfoDbId] = useState(null);
+  const [gymInfoMigrationPending, setGymInfoMigrationPending] = useState(false);
 
   // Supabase Database Membership Plans State
   const [membershipPlans, setMembershipPlans] = useState([]);
@@ -129,6 +139,32 @@ export function AppProvider({ children }) {
       setMembershipPlans([]);
     } finally {
       setPlansLoading(false);
+    }
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Supabase Gym Info Fetch (Phase 1 — Gym Profile & Info synchronization)
+  // ---------------------------------------------------------------------------
+  const fetchGymInfo = useCallback(async () => {
+    if (!isSupabaseConfigured) return;
+    setGymInfoLoading(true);
+    setGymInfoError(null);
+    try {
+      const { data, error, migrationPending } = await fetchGymInfoService();
+      setGymInfoMigrationPending(Boolean(migrationPending));
+      if (error) {
+        setGymInfoError(error.message || 'Failed to load gym profile.');
+        // Do NOT overwrite gymInfo state — keep showing the placeholder so
+        // the UI remains functional even when the DB read fails.
+      } else if (data) {
+        setGymInfoDbId(data.id);
+        setGymInfo(data);
+        setGymInfoError(null);
+      }
+    } catch (err) {
+      setGymInfoError(err instanceof Error ? err.message : 'Unexpected error loading gym profile.');
+    } finally {
+      setGymInfoLoading(false);
     }
   }, []);
 
@@ -414,6 +450,7 @@ export function AppProvider({ children }) {
             setUser(null);
             setRole(null);
             setAuthError(null);
+            setGymInfoMigrationPending(false);
           }
         }
       } catch (err) {
@@ -422,6 +459,7 @@ export function AppProvider({ children }) {
           setSession(null);
           setUser(null);
           setRole(null);
+          setGymInfoMigrationPending(false);
         }
       } finally {
         if (isMounted) {
@@ -441,6 +479,7 @@ export function AppProvider({ children }) {
         setUser(null);
         setRole(null);
         setAuthError(null);
+        setGymInfoMigrationPending(false);
         setAuthLoading(false);
         return;
       }
@@ -530,13 +569,16 @@ export function AppProvider({ children }) {
       setUser(null);
       setRole(null);
       setAuthError(null);
+      setGymInfoMigrationPending(false);
       setAuthLoading(false);
     }
   }, []);
 
-  // Fetch active membership plans, members, payments, PT data, attendance, notifications, and followups whenever session is authenticated and authorized
+  // Fetch active membership plans, members, payments, PT data, attendance, notifications, followups,
+  // and gym profile whenever session is authenticated and authorized
   useEffect(() => {
     if (session?.user && session.user.email_confirmed_at && isValidRole(role)) {
+      fetchGymInfo();
       fetchPlans();
       fetchMembers();
       fetchPayments();
@@ -545,6 +587,11 @@ export function AppProvider({ children }) {
       fetchNotifications();
       fetchFollowups();
     } else if (!session?.user) {
+      // Unauthenticated / demo mode: reset gym info to localStorage (or seed)
+      setGymInfoDbId(null);
+      setGymInfoLoading(false);
+      setGymInfoError(null);
+      setGymInfo(loadFromStorage(STORAGE_KEYS.GYM_INFO, GYM_INFO));
       setMembershipPlans([]);
       setPlansLoading(false);
       setPlansError(null);
@@ -573,7 +620,7 @@ export function AppProvider({ children }) {
       setNotificationsLoading(false);
       setNotificationsError(null);
     }
-  }, [session, role, fetchPlans, fetchMembers, fetchPayments, fetchPtData, fetchCheckins, fetchNotifications, fetchFollowups]);
+  }, [session, role, fetchGymInfo, fetchPlans, fetchMembers, fetchPayments, fetchPtData, fetchCheckins, fetchNotifications, fetchFollowups]);
 
   // Sync state changes to LocalStorage (only when unauthenticated to preserve prototype records)
   useEffect(() => {
@@ -614,7 +661,14 @@ export function AppProvider({ children }) {
       saveToStorage(STORAGE_KEYS.NOTIFICATIONS, notifications);
     }
   }, [notifications, session]);
-  useEffect(() => { saveToStorage(STORAGE_KEYS.GYM_INFO, gymInfo); }, [gymInfo]);
+  // Gym info localStorage sync: only write when unauthenticated (demo/offline mode).
+  // When authenticated, Supabase is the authoritative source — we must not let the
+  // browser's local copy silently diverge from the database.
+  useEffect(() => {
+    if (!session?.user) {
+      saveToStorage(STORAGE_KEYS.GYM_INFO, gymInfo);
+    }
+  }, [gymInfo, session]);
 
   /**
    * Automated rule synchronization:
@@ -817,7 +871,10 @@ export function AppProvider({ children }) {
           ? `Initial registration: ${memberData.notes}`
           : `Initial membership registration (${dbResult.plan_name})`,
       };
-      setPayments(prev => [initialPayment, ...prev]);
+      setPayments(prev => {
+        const exists = prev.some(p => p.id === initialPayment.id || p.paymentId === initialPayment.id || (initialPayment.receiptNumber && p.receiptNumber === initialPayment.receiptNumber));
+        return exists ? prev : [initialPayment, ...prev];
+      });
     }
 
     return {
@@ -1448,9 +1505,41 @@ export function AppProvider({ children }) {
     };
   }, [session, payments, members, fetchMembers, fetchPayments]);
 
-  const updateGymInfo = useCallback((updates) => {
+  /**
+   * updateGymInfo — Phase 1 Supabase-backed gym profile update.
+   *
+   * When authenticated:
+   *   1. Calls gymInfoService.updateGymInfo() with the DB record id.
+   *   2. On success, updates shared React state with the database-confirmed record.
+   *   3. Throws a descriptive error on failure (caller shows error UI).
+   *      NEVER shows success before the database confirms the write.
+   *
+   * When unauthenticated (demo/offline mode):
+   *   Falls back to local state update only (existing demo behaviour preserved).
+   */
+  const updateGymInfo = useCallback(async (updates) => {
+    if (session?.user && isSupabaseConfigured) {
+      if (!gymInfoDbId) {
+        throw new Error(
+          'Gym profile is not loaded from the database yet. Please wait and try again.'
+        );
+      }
+      const { data, error, migrationPending } = await updateGymInfoService(gymInfoDbId, updates);
+      if (migrationPending !== undefined) {
+        setGymInfoMigrationPending(Boolean(migrationPending));
+      }
+      if (error) {
+        throw error;
+      }
+      // Update state with the database-confirmed record (not just the local form values)
+      setGymInfo(data);
+      return data;
+    }
+
+    // Demo / unauthenticated fallback — preserve existing behaviour
     setGymInfo(prev => ({ ...prev, ...updates }));
-  }, []);
+    return { ...gymInfo, ...updates };
+  }, [session, gymInfoDbId, gymInfo]);
 
   /**
    * Resets local storage and state to original seed data
@@ -1465,6 +1554,9 @@ export function AppProvider({ children }) {
     setPtSessions(PT_SESSIONS);
     setNotifications(NOTIFICATIONS_DATA);
     setGymInfo(GYM_INFO);
+    setGymInfoDbId(null);
+    setGymInfoError(null);
+    setGymInfoMigrationPending(false);
   }, []);
 
   const isEmailVerified = Boolean(user?.email_confirmed_at);
@@ -1546,7 +1638,11 @@ export function AppProvider({ children }) {
     ptClients, setPtClients, addPtClient, updatePtClient,
     ptSessions, setPtSessions, addPtSession, updatePtSessionStatus, updatePtSession,
     setNotifications, addNotification, updateNotification, sendNotification,
+    // Gym Profile State (Phase 1: Supabase-backed)
     gymInfo, updateGymInfo,
+    gymInfoLoading, gymInfoError,
+    gymInfoMigrationPending,
+    refreshGymInfo: fetchGymInfo,
     renewMember,
     resetToDemoData,
   };

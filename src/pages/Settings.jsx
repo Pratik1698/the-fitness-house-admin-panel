@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import { PageHeader } from '../components/ui/PageHeader';
 import { Card, CardHeader, CardTitle, CardDescription } from '../components/ui/Card';
@@ -8,29 +8,35 @@ import { Badge } from '../components/ui/Badge';
 import { PT_PACKAGES } from '../data/sampleData';
 import {
   Building2, CreditCard, Dumbbell, Bell, Shield, User,
-  Check, Save, Clock, Phone, Mail, MapPin, Plus, Lock, Key
+  Check, Save, Clock, Phone, Mail, MapPin, Plus, Lock, Key,
+  AlertCircle, Loader2,
 } from 'lucide-react';
 import { ChangePasswordModal } from '../components/auth/ChangePasswordModal';
 
 export default function Settings() {
-  const { gymInfo, updateGymInfo, user, role, membershipPlans, plansLoading, plansError, reloadPlans } = useApp();
-  const [activeSection, setActiveSection] = useState('gym'); // 'gym' | 'plans' | 'pt' | 'notifications' | 'admin'
-  const [saveSuccess, setSaveSuccess] = useState(false);
+  const {
+    gymInfo, updateGymInfo, gymInfoLoading, gymInfoError, gymInfoMigrationPending, refreshGymInfo,
+    user, role,
+    membershipPlans, plansLoading, plansError, reloadPlans,
+    isSupabaseConfigured,
+  } = useApp();
+
+  const [activeSection, setActiveSection] = useState('gym');
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
 
-  // Form states initialized with gymInfo
+  // ── Gym Profile form state ─────────────────────────────────────────────────
   const [gymForm, setGymForm] = useState({
-    name: gymInfo.name,
-    tagline: gymInfo.tagline,
-    location: gymInfo.location,
-    address: gymInfo.address,
-    phone: gymInfo.phone,
-    whatsapp: gymInfo.whatsapp,
-    email: gymInfo.email,
-    timings: gymInfo.timings,
+    name:      gymInfo.name      ?? '',
+    tagline:   gymInfo.tagline   ?? '',
+    location:  gymInfo.location  ?? '',
+    address:   gymInfo.address   ?? '',
+    phone:     gymInfo.phone     ?? '',
+    whatsapp:  gymInfo.whatsapp  ?? '',
+    email:     gymInfo.email     ?? '',
+    timings:   gymInfo.timings   ?? '',
   });
 
-  // Notification toggles
+  // Notification toggles (demo state preserved)
   const [reminders, setReminders] = useState({
     fiveDay: true,
     threeDay: true,
@@ -41,11 +47,62 @@ export default function Settings() {
     smsFallback: true,
   });
 
-  const handleSaveGymInfo = (e) => {
+  // Track whether the user has made unsaved edits so we do not overwrite them
+  // when a background refresh comes in after a successful save.
+  const formIsDirty = useRef(false);
+
+  // When gymInfo loads from Supabase (or changes after a successful save),
+  // repopulate the form — but only if there are no unsaved edits.
+  useEffect(() => {
+    if (!formIsDirty.current) {
+      setGymForm({
+        name:     gymInfo.name      ?? '',
+        tagline:  gymInfo.tagline   ?? '',
+        location: gymInfo.location  ?? '',
+        address:  gymInfo.address   ?? '',
+        phone:    gymInfo.phone     ?? '',
+        whatsapp: gymInfo.whatsapp  ?? '',
+        email:    gymInfo.email     ?? '',
+        timings:  gymInfo.timings   ?? '',
+      });
+    }
+  }, [gymInfo]);
+
+  const [saving, setSaving] = useState(false);
+  const [saveSuccess, setSaveSuccess] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+
+  const isAdmin = role === 'admin';
+
+  const handleFieldChange = (field, value) => {
+    formIsDirty.current = true;
+    setSaveSuccess(false);
+    setSaveError(null);
+    setGymForm(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSaveGymInfo = async (e) => {
     e.preventDefault();
-    updateGymInfo(gymForm);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 3000);
+    if (!isAdmin) return; // Extra guard — RLS enforces this server-side too
+    if (saving) return;   // Prevent duplicate submissions
+
+    setSaving(true);
+    setSaveSuccess(false);
+    setSaveError(null);
+
+    try {
+      await updateGymInfo(gymForm);
+      formIsDirty.current = false;
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 4000);
+    } catch (err) {
+      setSaveSuccess(false);
+      setSaveError(
+        err?.message || 'Failed to save gym profile. Please try again.'
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -109,22 +166,92 @@ export default function Settings() {
                     These details appear on member payment invoices, renewal receipts, and WhatsApp message headers.
                   </CardDescription>
                 </div>
-                <Button size="sm" onClick={handleSaveGymInfo} icon={Save}>
-                  Save Changes
+                <Button
+                  size="sm"
+                  onClick={handleSaveGymInfo}
+                  disabled={saving || !isAdmin || gymInfoLoading}
+                  icon={saving ? Loader2 : !isAdmin ? Lock : Save}
+                  className={saving ? '[&>svg]:animate-spin' : ''}
+                >
+                  {saving ? 'Saving...' : !isAdmin ? 'Save Changes (Admin Only)' : 'Save Changes'}
                 </Button>
               </CardHeader>
+
+              {/* Status / Feedback Banners */}
+              <div className="space-y-3 mt-4">
+                {gymInfoLoading && (
+                  <div className="flex items-center gap-2 p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] text-xs text-[#64717B]">
+                    <Loader2 size={16} className="animate-spin text-[#16845B]" />
+                    <span>Loading authoritative facility profile from Supabase...</span>
+                  </div>
+                )}
+
+                {/* Migration Warning Banner: Distinguishes schema migration pending from transient network errors */}
+                {gymInfoMigrationPending && !saveSuccess && (
+                  <div className="flex items-start gap-2.5 p-3.5 rounded-xl bg-[#FFF9F5] border border-[#FEE4D2] text-xs text-[#B93815]">
+                    <AlertCircle size={16} className="shrink-0 mt-0.5 text-[#B93815]" />
+                    <div className="space-y-1">
+                      <p className="font-semibold text-[#7A271A]">
+                        Database Migration Pending for Extended Facility Fields
+                      </p>
+                      <p className="text-[11px] leading-relaxed text-[#7A271A]">
+                        Extended profile fields (WhatsApp helpline, operating hours, location) cannot synchronize to Supabase until database migration <code className="font-mono font-semibold px-1 py-0.5 bg-[#FEE4D2] rounded text-[#B93815]">20261101000000_phase1_gym_info_missing_columns.sql</code> is applied. Base profile fields (name, phone, email, address) continue to synchronize safely.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {gymInfoError && (
+                  <div className="flex items-center justify-between p-3.5 rounded-xl bg-[#FEF3F2] border border-[#FECDCA] text-xs text-[#B42318]">
+                    <div className="flex items-center gap-2">
+                      <AlertCircle size={16} className="shrink-0" />
+                      <span>{gymInfoError}</span>
+                    </div>
+                    {refreshGymInfo && (
+                      <Button variant="secondary" size="sm" onClick={refreshGymInfo}>
+                        Retry
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {saveError && (
+                  <div className="flex items-center gap-2 p-3.5 rounded-xl bg-[#FEF3F2] border border-[#FECDCA] text-xs text-[#B42318]">
+                    <AlertCircle size={16} className="shrink-0" />
+                    <span>{saveError}</span>
+                  </div>
+                )}
+
+                {saveSuccess && (
+                  <div className="flex items-center gap-2 p-3.5 rounded-xl bg-[#E8F5EE] border border-[#16845B]/20 text-xs font-semibold text-[#16845B]">
+                    <Check size={16} className="shrink-0" />
+                    <span>Gym facility profile saved to database and synchronized across all environments!</span>
+                  </div>
+                )}
+
+                {!isAdmin && (
+                  <div className="flex items-center gap-2 p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] text-xs text-[#64717B]">
+                    <Lock size={14} className="shrink-0 text-[#64717B]" />
+                    <span>
+                      Staff View (Read-Only): Administrator privileges are required to update gym facility details.
+                    </span>
+                  </div>
+                )}
+              </div>
 
               <form onSubmit={handleSaveGymInfo} className="space-y-4 mt-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <Input
                     label="Gym Name"
                     value={gymForm.name}
-                    onChange={(e) => setGymForm({ ...gymForm, name: e.target.value })}
+                    onChange={(e) => handleFieldChange('name', e.target.value)}
+                    disabled={!isAdmin || saving || gymInfoLoading}
                   />
                   <Input
                     label="Tagline / Department"
                     value={gymForm.tagline}
-                    onChange={(e) => setGymForm({ ...gymForm, tagline: e.target.value })}
+                    onChange={(e) => handleFieldChange('tagline', e.target.value)}
+                    disabled={!isAdmin || saving || gymInfoLoading}
                   />
                 </div>
 
@@ -132,20 +259,23 @@ export default function Settings() {
                   <Input
                     label="Primary Phone"
                     value={gymForm.phone}
-                    onChange={(e) => setGymForm({ ...gymForm, phone: e.target.value })}
+                    onChange={(e) => handleFieldChange('phone', e.target.value)}
                     icon={Phone}
+                    disabled={!isAdmin || saving || gymInfoLoading}
                   />
                   <Input
                     label="WhatsApp Helpline"
                     value={gymForm.whatsapp}
-                    onChange={(e) => setGymForm({ ...gymForm, whatsapp: e.target.value })}
+                    onChange={(e) => handleFieldChange('whatsapp', e.target.value)}
                     icon={Phone}
+                    disabled={!isAdmin || saving || gymInfoLoading}
                   />
                   <Input
                     label="Official Email"
                     value={gymForm.email}
-                    onChange={(e) => setGymForm({ ...gymForm, email: e.target.value })}
+                    onChange={(e) => handleFieldChange('email', e.target.value)}
                     icon={Mail}
+                    disabled={!isAdmin || saving || gymInfoLoading}
                   />
                 </div>
 
@@ -153,21 +283,24 @@ export default function Settings() {
                   <Input
                     label="Location / Town"
                     value={gymForm.location}
-                    onChange={(e) => setGymForm({ ...gymForm, location: e.target.value })}
+                    onChange={(e) => handleFieldChange('location', e.target.value)}
                     icon={MapPin}
+                    disabled={!isAdmin || saving || gymInfoLoading}
                   />
                   <Input
                     label="Gym Operating Hours"
                     value={gymForm.timings}
-                    onChange={(e) => setGymForm({ ...gymForm, timings: e.target.value })}
+                    onChange={(e) => handleFieldChange('timings', e.target.value)}
                     icon={Clock}
+                    disabled={!isAdmin || saving || gymInfoLoading}
                   />
                 </div>
 
                 <Textarea
                   label="Full Street Address"
                   value={gymForm.address}
-                  onChange={(e) => setGymForm({ ...gymForm, address: e.target.value })}
+                  onChange={(e) => handleFieldChange('address', e.target.value)}
+                  disabled={!isAdmin || saving || gymInfoLoading}
                 />
               </form>
             </Card>
