@@ -11,7 +11,14 @@ import {
   resetPassword as authResetPassword,
   resendVerificationEmail as authResendVerificationEmail,
 } from '../services/authService';
-import { getActiveMembershipPlans } from '../services/membershipPlanService';
+import {
+  getActiveMembershipPlans,
+  getAllMembershipPlans,
+  createMembershipPlan as createMembershipPlanService,
+  updateMembershipPlan as updateMembershipPlanService,
+  deactivateMembershipPlan as deactivateMembershipPlanService,
+  reactivateMembershipPlan as reactivateMembershipPlanService,
+} from '../services/membershipPlanService';
 import {
   onboardMember as onboardMemberService,
   getActiveMembers,
@@ -119,6 +126,7 @@ export function AppProvider({ children }) {
 
   // Supabase Database Membership Plans State
   const [membershipPlans, setMembershipPlans] = useState([]);
+  const [allMembershipPlans, setAllMembershipPlans] = useState([]);
   const [plansLoading, setPlansLoading] = useState(false);
   const [plansError, setPlansError] = useState(null);
 
@@ -126,17 +134,26 @@ export function AppProvider({ children }) {
     setPlansLoading(true);
     setPlansError(null);
     try {
-      const { data, error } = await getActiveMembershipPlans();
-      if (error) {
-        setPlansError(error.message || 'Failed to load membership plans.');
+      const [allRes, activeRes] = await Promise.all([
+        getAllMembershipPlans(),
+        getActiveMembershipPlans(),
+      ]);
+
+      if (allRes.error && activeRes.error) {
+        setPlansError(allRes.error.message || activeRes.error.message || 'Failed to load membership plans.');
         setMembershipPlans([]);
+        setAllMembershipPlans([]);
       } else {
-        setMembershipPlans(data || []);
+        const allData = allRes.data || [];
+        const activeData = activeRes.data || allData.filter(p => p.is_active);
+        setAllMembershipPlans(allData);
+        setMembershipPlans(activeData);
         setPlansError(null);
       }
     } catch (err) {
       setPlansError(err instanceof Error ? err.message : 'Unexpected error loading membership plans.');
       setMembershipPlans([]);
+      setAllMembershipPlans([]);
     } finally {
       setPlansLoading(false);
     }
@@ -593,6 +610,7 @@ export function AppProvider({ children }) {
       setGymInfoError(null);
       setGymInfo(loadFromStorage(STORAGE_KEYS.GYM_INFO, GYM_INFO));
       setMembershipPlans([]);
+      setAllMembershipPlans([]);
       setPlansLoading(false);
       setPlansError(null);
       setMembers(loadFromStorage(STORAGE_KEYS.MEMBERS, MEMBERS));
@@ -1542,6 +1560,35 @@ export function AppProvider({ children }) {
   }, [session, gymInfoDbId, gymInfo]);
 
   /**
+   * Membership Plans mutation operations (Phase 2)
+   */
+  const createPlan = useCallback(async (planData) => {
+    const res = await createMembershipPlanService(planData);
+    if (!res.error) {
+      await fetchPlans();
+    }
+    return res;
+  }, [fetchPlans]);
+
+  const updatePlan = useCallback(async (id, updates) => {
+    const res = await updateMembershipPlanService(id, updates);
+    if (!res.error) {
+      await fetchPlans();
+    }
+    return res;
+  }, [fetchPlans]);
+
+  const togglePlanStatus = useCallback(async (id, currentIsActive) => {
+    const res = currentIsActive
+      ? await deactivateMembershipPlanService(id)
+      : await reactivateMembershipPlanService(id);
+    if (!res.error) {
+      await fetchPlans();
+    }
+    return res;
+  }, [fetchPlans]);
+
+  /**
    * Resets local storage and state to original seed data
    */
   const resetToDemoData = useCallback(() => {
@@ -1557,6 +1604,8 @@ export function AppProvider({ children }) {
     setGymInfoDbId(null);
     setGymInfoError(null);
     setGymInfoMigrationPending(false);
+    setMembershipPlans([]);
+    setAllMembershipPlans([]);
   }, []);
 
   const isEmailVerified = Boolean(user?.email_confirmed_at);
@@ -1584,10 +1633,14 @@ export function AppProvider({ children }) {
     isSupabaseConfigured,
 
     // Membership Plans Catalog State (from Supabase public.membership_plans)
-    membershipPlans,
+    membershipPlans, // Active plans only (for member onboarding & renewals)
+    allMembershipPlans, // All plans including inactive (for Settings management)
     plansLoading,
     plansError,
     reloadPlans: fetchPlans,
+    createPlan,
+    updatePlan,
+    togglePlanStatus,
 
     // Members Directory Supabase State (from Supabase public.v_active_members)
     membersLoading,

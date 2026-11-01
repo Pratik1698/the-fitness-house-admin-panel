@@ -9,20 +9,30 @@ import { PT_PACKAGES } from '../data/sampleData';
 import {
   Building2, CreditCard, Dumbbell, Bell, Shield, User,
   Check, Save, Clock, Phone, Mail, MapPin, Plus, Lock, Key,
-  AlertCircle, Loader2,
+  AlertCircle, Loader2, Power,
 } from 'lucide-react';
 import { ChangePasswordModal } from '../components/auth/ChangePasswordModal';
+import { PlanEditorModal } from '../components/settings/PlanEditorModal';
+import { Modal } from '../components/ui/Modal';
 
 export default function Settings() {
   const {
     gymInfo, updateGymInfo, gymInfoLoading, gymInfoError, gymInfoMigrationPending, refreshGymInfo,
     user, role,
-    membershipPlans, plansLoading, plansError, reloadPlans,
+    membershipPlans, allMembershipPlans, plansLoading, plansError, reloadPlans,
+    createPlan, updatePlan, togglePlanStatus,
     isSupabaseConfigured,
   } = useApp();
 
   const [activeSection, setActiveSection] = useState('gym');
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+
+  // ── Membership Plans modal & action state ──────────────────────────────────
+  const [planModalOpen, setPlanModalOpen] = useState(false);
+  const [editingPlan, setEditingPlan] = useState(null);
+  const [planFeedback, setPlanFeedback] = useState(null);
+  const [planToToggle, setPlanToToggle] = useState(null);
+  const [togglingPlanId, setTogglingPlanId] = useState(null);
 
   // ── Gym Profile form state ─────────────────────────────────────────────────
   const [gymForm, setGymForm] = useState({
@@ -104,6 +114,80 @@ export default function Settings() {
       setSaving(false);
     }
   };
+
+  // ── Plan Action Handlers ──────────────────────────────────────────────────
+  const handleOpenCreatePlan = () => {
+    if (!isAdmin) return;
+    setEditingPlan(null);
+    setPlanModalOpen(true);
+  };
+
+  const handleOpenEditPlan = (plan) => {
+    if (!isAdmin) return;
+    setEditingPlan(plan);
+    setPlanModalOpen(true);
+  };
+
+  const handleSavePlan = async (planData, planId) => {
+    if (!isAdmin) {
+      return { error: 'Permission denied: only administrators can modify membership plans.' };
+    }
+    try {
+      const res = planId
+        ? await updatePlan(planId, planData)
+        : await createPlan(planData);
+
+      if (res.error) {
+        return { error: res.error.message || 'Failed to save plan.' };
+      }
+
+      setPlanFeedback({
+        type: 'success',
+        message: planId
+          ? `Membership plan "${res.data?.name || planData.name}" updated successfully.`
+          : `Membership plan "${res.data?.name || planData.name}" created and published.`,
+      });
+      setTimeout(() => setPlanFeedback(null), 4000);
+      return { success: true };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'An unexpected error occurred while saving plan.' };
+    }
+  };
+
+  const handleConfirmToggleStatus = async () => {
+    if (!planToToggle || !isAdmin) return;
+    const { plan, targetActive } = planToToggle;
+    setTogglingPlanId(plan.id);
+    try {
+      const res = await togglePlanStatus(plan.id, plan.is_active);
+      if (res.error) {
+        setPlanFeedback({
+          type: 'error',
+          message: res.error.message || `Failed to ${targetActive ? 'activate' : 'deactivate'} plan.`,
+        });
+      } else {
+        setPlanFeedback({
+          type: 'success',
+          message: `Plan "${plan.name}" has been ${targetActive ? 'activated' : 'deactivated'}. ${
+            targetActive
+              ? 'It is now available for member onboarding and renewals.'
+              : 'It is now hidden from new registrations and renewal options.'
+          }`,
+        });
+        setTimeout(() => setPlanFeedback(null), 4000);
+      }
+    } catch (err) {
+      setPlanFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to update plan status.',
+      });
+    } finally {
+      setTogglingPlanId(null);
+      setPlanToToggle(null);
+    }
+  };
+
+  const displayPlans = allMembershipPlans && allMembershipPlans.length > 0 ? allMembershipPlans : membershipPlans;
 
   return (
     <div className="space-y-6">
@@ -316,10 +400,38 @@ export default function Settings() {
                     Base subscription tiers selectable when registering members or issuing plan renewals.
                   </CardDescription>
                 </div>
-                <Button size="sm" onClick={() => alert('New plan configuration modal (Demo preview)')} icon={Plus}>
-                  Add Plan
+                <Button
+                  size="sm"
+                  onClick={handleOpenCreatePlan}
+                  disabled={!isAdmin}
+                  icon={!isAdmin ? Lock : Plus}
+                >
+                  {!isAdmin ? 'Add Plan (Admin Only)' : 'Add Plan'}
                 </Button>
               </CardHeader>
+
+              {/* Status / Feedback Banners */}
+              <div className="space-y-3 mt-4">
+                {planFeedback && (
+                  <div className={`flex items-center gap-2 p-3.5 rounded-xl border text-xs font-semibold ${
+                    planFeedback.type === 'success'
+                      ? 'bg-[#E8F5EE] border-[#16845B]/20 text-[#16845B]'
+                      : 'bg-[#FEF3F2] border-[#FECDCA] text-[#B42318]'
+                  }`}>
+                    {planFeedback.type === 'success' ? <Check size={16} className="shrink-0" /> : <AlertCircle size={16} className="shrink-0" />}
+                    <span>{planFeedback.message}</span>
+                  </div>
+                )}
+
+                {!isAdmin && (
+                  <div className="flex items-center gap-2 p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] text-xs text-[#64717B]">
+                    <Lock size={14} className="shrink-0 text-[#64717B]" />
+                    <span>
+                      Staff View (Read-Only): Administrator privileges are required to configure, edit, or toggle membership plans.
+                    </span>
+                  </div>
+                )}
+              </div>
 
               <div className="overflow-x-auto mt-4">
                 <table className="w-full text-left text-sm">
@@ -337,7 +449,10 @@ export default function Settings() {
                     {plansLoading ? (
                       <tr>
                         <td colSpan={6} className="px-4 py-8 text-center text-xs text-[#64717B]">
-                          Loading membership plans from database...
+                          <div className="flex items-center justify-center gap-2">
+                            <Loader2 size={16} className="animate-spin text-[#16845B]" />
+                            <span>Loading membership plans from database...</span>
+                          </div>
                         </td>
                       </tr>
                     ) : plansError ? (
@@ -349,16 +464,24 @@ export default function Settings() {
                           </Button>
                         </td>
                       </tr>
-                    ) : membershipPlans.length === 0 ? (
+                    ) : displayPlans.length === 0 ? (
                       <tr>
                         <td colSpan={6} className="px-4 py-8 text-center text-xs text-[#64717B]">
-                          No active membership plans found in database.
+                          No membership plans found in database. {isAdmin ? 'Click "Add Plan" to create one.' : ''}
                         </td>
                       </tr>
                     ) : (
-                      membershipPlans.map(p => (
-                        <tr key={p.id} className="hover:bg-[#F5F7F8]/50">
-                          <td className="px-4 py-3 font-semibold text-[#25313B]">{p.name}</td>
+                      displayPlans.map(p => (
+                        <tr
+                          key={p.id}
+                          className={`hover:bg-[#F5F7F8]/50 transition-colors ${!p.is_active ? 'bg-[#F9FAFA]/60 opacity-80' : ''}`}
+                        >
+                          <td className="px-4 py-3">
+                            <div className="font-semibold text-[#25313B]">{p.name}</div>
+                            {p.description && (
+                              <p className="text-[11px] text-[#64717B] truncate max-w-xs">{p.description}</p>
+                            )}
+                          </td>
                           <td className="px-4 py-3 text-[#64717B]">{p.duration} days</td>
                           <td className="px-4 py-3 font-bold text-[#16845B]">₹{p.price.toLocaleString('en-IN')}</td>
                           <td className="px-4 py-3 text-xs text-[#64717B]">
@@ -370,7 +493,32 @@ export default function Settings() {
                             </Badge>
                           </td>
                           <td className="px-4 py-3 text-right">
-                            <Button variant="ghost" size="sm" onClick={() => alert(`Edit plan ${p.name}`)}>Edit</Button>
+                            {isAdmin ? (
+                              <div className="flex items-center justify-end gap-1.5">
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => handleOpenEditPlan(p)}
+                                  disabled={Boolean(togglingPlanId)}
+                                >
+                                  Edit
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setPlanToToggle({ plan: p, targetActive: !p.is_active })}
+                                  disabled={Boolean(togglingPlanId)}
+                                  className={p.is_active
+                                    ? "text-[#B42318] hover:text-[#911d13] hover:bg-[#FEF3F2]"
+                                    : "text-[#16845B] hover:text-[#126B4A] hover:bg-[#E8F5EE]"
+                                  }
+                                >
+                                  {p.is_active ? "Deactivate" : "Activate"}
+                                </Button>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-[#64717B] italic">Read-Only</span>
+                            )}
                           </td>
                         </tr>
                       ))
@@ -596,6 +744,73 @@ export default function Settings() {
         isOpen={changePasswordOpen}
         onClose={() => setChangePasswordOpen(false)}
       />
+
+      {/* Plan Configuration & Editor Modal (Phase 2) */}
+      <PlanEditorModal
+        isOpen={planModalOpen}
+        onClose={() => {
+          setPlanModalOpen(false);
+          setEditingPlan(null);
+        }}
+        plan={editingPlan}
+        onSave={handleSavePlan}
+      />
+
+      {/* Confirmation Modal for Plan Deactivation / Reactivation */}
+      {planToToggle && (
+        <Modal
+          isOpen={Boolean(planToToggle)}
+          onClose={() => setPlanToToggle(null)}
+          title={planToToggle.targetActive ? "Activate Membership Plan" : "Deactivate Membership Plan"}
+          size="sm"
+          footer={
+            <div className="flex items-center justify-end gap-2.5 w-full">
+              <Button
+                variant="secondary"
+                onClick={() => setPlanToToggle(null)}
+                disabled={Boolean(togglingPlanId)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant={planToToggle.targetActive ? "primary" : "danger"}
+                onClick={handleConfirmToggleStatus}
+                disabled={Boolean(togglingPlanId)}
+                icon={togglingPlanId ? Loader2 : planToToggle.targetActive ? Check : Power}
+              >
+                {togglingPlanId
+                  ? "Updating..."
+                  : planToToggle.targetActive
+                  ? "Confirm Activation"
+                  : "Confirm Deactivation"}
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-3 text-xs text-[#25313B]">
+            <p>
+              {planToToggle.targetActive ? (
+                <>
+                  Are you sure you want to reactivate the <strong>{planToToggle.plan.name}</strong> plan?
+                </>
+              ) : (
+                <>
+                  Are you sure you want to deactivate the <strong>{planToToggle.plan.name}</strong> plan?
+                </>
+              )}
+            </p>
+            <div className={`p-3 rounded-xl border text-xs leading-relaxed ${
+              planToToggle.targetActive
+                ? "bg-[#E8F5EE] border-[#16845B]/20 text-[#16845B]"
+                : "bg-[#FFF9F5] border-[#FEE4D2] text-[#B93815]"
+            }`}>
+              {planToToggle.targetActive
+                ? "Once reactivated, this plan will immediately be selectable for new member registration and renewal subscriptions."
+                : "Inactive plans are hidden from member onboarding and renewal dropdowns. Existing member subscriptions will not be modified or deleted."}
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }
