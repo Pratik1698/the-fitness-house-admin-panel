@@ -1,4 +1,17 @@
-import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { supabase, isSupabaseConfigured } from './supabaseClient.js';
+
+let activeClient = supabase;
+let activeConfigured = isSupabaseConfigured;
+
+export function setSupabaseClientForTesting(client, configured = true) {
+  activeClient = client;
+  activeConfigured = configured;
+}
+
+export function resetSupabaseClientForTesting() {
+  activeClient = supabase;
+  activeConfigured = isSupabaseConfigured;
+}
 
 /**
  * Authentication Service
@@ -288,13 +301,14 @@ export async function getCurrentUser() {
  * @returns {Promise<string|null>}
  */
 export async function getUserRole(userId) {
-  if (!isSupabaseConfigured) {
+  const isConfigured = typeof activeConfigured === 'function' ? await activeConfigured() : activeConfigured;
+  if (!isConfigured || !activeClient) {
     return null;
   }
 
   try {
     // 1. Primary: Attempt resolution via Phase 7C RPC
-    const { data: roleData, error: rpcError } = await supabase.rpc('get_user_role');
+    const { data: roleData, error: rpcError } = await activeClient.rpc('get_user_role');
     if (!rpcError && roleData) {
       const roleStr = String(roleData).trim().toLowerCase();
       if (isValidRole(roleStr)) {
@@ -302,26 +316,38 @@ export async function getUserRole(userId) {
       }
     }
 
-    // 2. Fallback: Query profile record directly if RPC is not resolved
+    // 2. Fallback: Query profile record directly only if RPC could not be executed
+    // Must explicitly verify is_active = true; inactive accounts MUST NOT authenticate via fallback.
     let targetId = userId;
-    if (!targetId) {
-      const { data: userData } = await supabase.auth.getUser();
+    if (!targetId && activeClient.auth?.getUser) {
+      const { data: userData } = await activeClient.auth.getUser();
       targetId = userData?.user?.id;
     }
 
     if (!targetId) return null;
 
-    const { data: profile, error: profileError } = await supabase
+    const { data: profile, error: profileError } = await activeClient
       .from('profiles')
-      .select('role')
+      .select('role, is_active')
       .eq('id', targetId)
       .maybeSingle();
 
-    if (!profileError && profile?.role) {
+    if (!profileError && profile && profile.is_active === true && profile.role) {
       const roleStr = String(profile.role).trim().toLowerCase();
       if (isValidRole(roleStr)) {
         return roleStr;
       }
+    }
+
+    // 3. Acceptance lifecycle check: If user profile is not active, check if they hold
+    // a valid pending invitation and atomically complete the server-side acceptance workflow
+    try {
+      const { data: acceptData, error: acceptError } = await activeClient.rpc('accept_staff_invitation');
+      if (!acceptError && acceptData?.success) {
+        return 'staff';
+      }
+    } catch {
+      // Not a pending invitee, or invite is expired/revoked/invalid
     }
 
     return null;

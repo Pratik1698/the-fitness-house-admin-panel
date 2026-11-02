@@ -8,12 +8,17 @@ import { Badge } from '../components/ui/Badge';
 import {
   Building2, CreditCard, Dumbbell, Bell, Shield, User,
   Check, Save, Clock, Phone, Mail, MapPin, Plus, Lock, Key,
-  AlertCircle, Loader2, Power, RefreshCw,
+  AlertCircle, AlertTriangle, Loader2, Power, RefreshCw, UserPlus, UserCheck, UserX,
+  ShieldAlert, History,
 } from 'lucide-react';
 import { ChangePasswordModal } from '../components/auth/ChangePasswordModal';
 import { PlanEditorModal } from '../components/settings/PlanEditorModal';
 import { PtPackageEditorModal } from '../components/settings/PtPackageEditorModal';
+import { InviteStaffModal } from '../components/settings/InviteStaffModal';
+import { StaffStatusModal } from '../components/settings/StaffStatusModal';
+import { StaffRoleModal } from '../components/settings/StaffRoleModal';
 import { Modal } from '../components/ui/Modal';
+import { getStaffStatusFeedback } from '../services/staffService';
 
 export default function Settings() {
   const {
@@ -25,11 +30,21 @@ export default function Settings() {
     createPtPackage, updatePtPackage, togglePtPackageStatus,
     reminderSettings, reminderSettingsLoading, reminderSettingsError, reloadReminderSettings,
     updateReminderSettings,
+    staffRoster, pendingInvitations, securityAuditLogs, staffLoading, staffError, refreshStaffRoster,
+    inviteStaffMember, updateStaffRole, toggleStaffStatus, revokeInvitation, resendInvitation,
     isSupabaseConfigured,
   } = useApp();
 
   const [activeSection, setActiveSection] = useState('gym');
   const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+
+  // ── Staff & Security modal & action state (Phase 5) ────────────────────────
+  const [inviteStaffOpen, setInviteStaffOpen] = useState(false);
+  const [staffStatusTarget, setStaffStatusTarget] = useState(null); // { staff, targetActive }
+  const [staffRoleTarget, setStaffRoleTarget] = useState(null); // { staff, targetRole }
+  const [staffFeedback, setStaffFeedback] = useState(null);
+  const [revokingInviteId, setRevokingInviteId] = useState(null);
+  const [resendingInviteId, setResendingInviteId] = useState(null);
 
   // ── Membership Plans modal & action state ──────────────────────────────────
   const [planModalOpen, setPlanModalOpen] = useState(false);
@@ -322,6 +337,78 @@ export default function Settings() {
       });
     } finally {
       setSavingReminders(false);
+    }
+  };
+
+  // ── Staff & Security Action Handlers (Phase 5) ────────────────────────────
+  const handleInviteStaffAction = async ({ email, fullName }) => {
+    if (!isAdmin) return { error: 'Permission denied: Only administrators can invite staff.' };
+    return await inviteStaffMember({ email, fullName });
+  };
+
+  const handleConfirmStaffStatus = async (userId, targetActive) => {
+    if (!isAdmin) return { error: 'Permission denied: Only administrators can modify account status.' };
+    const res = await toggleStaffStatus({ userId, isActive: targetActive });
+    const feedback = getStaffStatusFeedback({ targetActive, res });
+    setStaffFeedback(feedback);
+    if (feedback.type !== 'error') {
+      setTimeout(() => setStaffFeedback(null), feedback.type === 'warning' ? 6000 : 4000);
+    }
+    if (targetActive && !res.error && !res.data?.gotrueUnbanSucceeded) {
+      return {
+        data: res.data,
+        error: new Error(feedback.message),
+      };
+    }
+    return res;
+  };
+
+  const handleConfirmStaffRole = async (userId, targetRole) => {
+    if (!isAdmin) return { error: 'Permission denied: Only administrators can modify roles.' };
+    const res = await updateStaffRole({ userId, role: targetRole });
+    if (!res.error) {
+      setStaffFeedback({
+        type: 'success',
+        message: `Role successfully updated to ${targetRole}.`,
+      });
+      setTimeout(() => setStaffFeedback(null), 4000);
+    }
+    return res;
+  };
+
+  const handleRevokeInvitationAction = async (invitationId) => {
+    if (!isAdmin || revokingInviteId) return;
+    setRevokingInviteId(invitationId);
+    try {
+      const res = await revokeInvitation({ invitationId });
+      if (res.error) {
+        setStaffFeedback({ type: 'error', message: res.error.message || 'Failed to revoke invitation.' });
+      } else {
+        setStaffFeedback({ type: 'success', message: 'Staff invitation revoked.' });
+        setTimeout(() => setStaffFeedback(null), 3000);
+      }
+    } finally {
+      setRevokingInviteId(null);
+    }
+  };
+
+  const handleResendInvitationAction = async (invite) => {
+    if (!isAdmin || resendingInviteId) return;
+    setResendingInviteId(invite.id);
+    try {
+      const res = await resendInvitation({
+        invitationId: invite.id,
+        email: invite.email,
+        fullName: invite.fullName,
+      });
+      if (res.error) {
+        setStaffFeedback({ type: 'error', message: res.error.message || 'Failed to resend invitation.' });
+      } else {
+        setStaffFeedback({ type: 'success', message: `Invitation resent to ${invite.email}.` });
+        setTimeout(() => setStaffFeedback(null), 3000);
+      }
+    } finally {
+      setResendingInviteId(null);
     }
   };
 
@@ -956,36 +1043,294 @@ export default function Settings() {
                   </div>
                 </div>
 
-                {/* Staff roles placeholder */}
+                {/* Staff Feedback Alert */}
+                {staffFeedback && (
+                  <div className={`p-3 rounded-xl border text-xs flex items-center justify-between ${
+                    staffFeedback.type === 'error'
+                      ? 'bg-red-50 border-red-200 text-red-700'
+                      : staffFeedback.type === 'warning'
+                      ? 'bg-[#FFF9F5] border-[#FEE4D2] text-[#B93815]'
+                      : 'bg-[#E8F5EE] border-[#16845B]/20 text-[#16845B]'
+                  }`}>
+                    <div className="flex items-center gap-2">
+                      {staffFeedback.type === 'error' ? (
+                        <AlertCircle size={16} />
+                      ) : staffFeedback.type === 'warning' ? (
+                        <AlertTriangle size={16} />
+                      ) : (
+                        <Check size={16} />
+                      )}
+                      <span>{staffFeedback.message}</span>
+                    </div>
+                    <button
+                      onClick={() => setStaffFeedback(null)}
+                      className="text-xs hover:underline cursor-pointer"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                )}
+
+                {/* Staff Roster Management */}
                 <div>
                   <div className="flex items-center justify-between mb-3">
                     <div>
                       <h4 className="text-sm font-semibold text-[#25313B]">Staff Accounts & Permissions</h4>
-                      <p className="text-xs text-[#64717B]">Role-based access for desk staff and trainers</p>
+                      <p className="text-xs text-[#64717B]">
+                        {isAdmin
+                          ? 'Role-based access, account lifecycle, and staff invitations'
+                          : 'Read-only directory of authorized gym staff and trainers'}
+                      </p>
                     </div>
-                    <Button variant="secondary" size="sm" onClick={() => alert('Invite Staff Member (Demo preview)')} icon={Plus}>
-                      Add Staff
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={refreshStaffRoster}
+                        disabled={staffLoading}
+                        icon={RefreshCw}
+                        className={staffLoading ? '[&>svg]:animate-spin' : ''}
+                      >
+                        Refresh
+                      </Button>
+                      {isAdmin && (
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          onClick={() => setInviteStaffOpen(true)}
+                          icon={UserPlus}
+                        >
+                          Invite Staff
+                        </Button>
+                      )}
+                    </div>
                   </div>
 
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between p-3 rounded-lg border border-[#E1E6E9] bg-[#F5F7F8]">
-                      <div>
-                        <p className="text-sm font-semibold text-[#25313B]">Coach Pravin Joshi (Head Coach & Owner)</p>
-                        <p className="text-xs text-[#64717B]">pravinjoshi2707@gmail.com · Permissions: Full Access, PT Management</p>
-                      </div>
-                      <Badge variant="default">Coach & Owner</Badge>
+                  {!isAdmin && (
+                    <div className="mb-3 p-3 rounded-lg bg-[#F8FAFB] border border-[#E1E6E9] text-xs text-[#64717B] flex items-center gap-2">
+                      <Lock size={14} className="text-[#85949F] shrink-0" />
+                      <span>
+                        <strong>Read-Only Coworker Directory:</strong> Only administrators can dispatch staff invitations, modify roles, or deactivate accounts.
+                      </span>
                     </div>
+                  )}
 
-                    <div className="flex items-center justify-between p-3 rounded-lg border border-[#E1E6E9] bg-[#F5F7F8]">
-                      <div>
-                        <p className="text-sm font-semibold text-[#25313B]">Front Desk Arag (Reception)</p>
-                        <p className="text-xs text-[#64717B]">pravinjoshi2707@gmail.com · Permissions: Check-ins, Member Lookup</p>
-                      </div>
-                      <Badge variant="default">Front Desk</Badge>
+                  {staffLoading && staffRoster.length === 0 ? (
+                    <div className="p-8 text-center text-xs text-[#64717B] border border-dashed border-[#E1E6E9] rounded-xl bg-[#F5F7F8]">
+                      <Loader2 size={24} className="animate-spin mx-auto mb-2 text-[#16845B]" />
+                      Loading staff roster from database...
                     </div>
-                  </div>
+                  ) : staffRoster.length === 0 ? (
+                    <div className="p-8 text-center bg-slate-50 border border-dashed border-slate-300 rounded-xl">
+                      <User size={36} className="text-slate-400 mx-auto mb-2" />
+                      <p className="text-sm font-semibold text-slate-700">No staff accounts found in database</p>
+                      <p className="text-xs text-slate-500 mt-1">
+                        {isAdmin ? 'Click "Invite Staff" above to send an official invitation.' : 'No other staff accounts currently listed.'}
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto rounded-xl border border-[#E1E6E9] bg-white">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-[#F5F7F8] border-b border-[#E1E6E9] text-[#64717B] font-semibold">
+                          <tr>
+                            <th className="px-4 py-3">Staff Member</th>
+                            <th className="px-4 py-3">Role</th>
+                            <th className="px-4 py-3">Status</th>
+                            <th className="px-4 py-3">Joined</th>
+                            {isAdmin && <th className="px-4 py-3 text-right">Actions</th>}
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#E1E6E9]">
+                          {staffRoster.map((member) => {
+                            const isCurrentUser = member.id === user?.id;
+                            const isTargetAdmin = member.role === 'admin';
+
+                            return (
+                              <tr key={member.id} className="hover:bg-[#F9FAFB] transition-colors">
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-3">
+                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs ${
+                                      member.isActive ? 'bg-[#16845B] text-white' : 'bg-slate-300 text-slate-600'
+                                    }`}>
+                                      {member.fullName ? member.fullName.charAt(0).toUpperCase() : 'S'}
+                                    </div>
+                                    <div>
+                                      <p className="font-semibold text-[#25313B]">
+                                        {member.fullName || 'Staff Member'}
+                                        {isCurrentUser && (
+                                          <span className="ml-1.5 text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-normal">
+                                            You
+                                          </span>
+                                        )}
+                                      </p>
+                                      {member.email && (
+                                        <p className="text-[11px] text-[#64717B]">{member.email}</p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <Badge variant={member.role === 'admin' ? 'success' : 'default'}>
+                                    {member.role === 'admin' ? 'Administrator' : 'Staff Role'}
+                                  </Badge>
+                                </td>
+                                <td className="px-4 py-3">
+                                  {member.isActive ? (
+                                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#E8F5EE] text-[#16845B]">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-[#16845B]" />
+                                      Active
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-medium bg-red-50 text-red-700">
+                                      <span className="w-1.5 h-1.5 rounded-full bg-red-600" />
+                                      Deactivated
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-[#64717B] text-[11px]">
+                                  {member.createdAt
+                                    ? new Date(member.createdAt).toLocaleDateString('en-IN', {
+                                        day: 'numeric',
+                                        month: 'short',
+                                        year: 'numeric',
+                                      })
+                                    : '—'}
+                                </td>
+                                {isAdmin && (
+                                  <td className="px-4 py-3 text-right">
+                                    <div className="flex items-center justify-end gap-1.5">
+                                      {/* Change Role Button */}
+                                      <Button
+                                        variant="secondary"
+                                        size="xs"
+                                        onClick={() =>
+                                          setStaffRoleTarget({
+                                            staff: member,
+                                            targetRole: isTargetAdmin ? 'staff' : 'admin',
+                                          })
+                                        }
+                                        disabled={isCurrentUser}
+                                        title={isCurrentUser ? "You cannot modify your own role" : "Change staff role"}
+                                      >
+                                        {isTargetAdmin ? 'Demote to Staff' : 'Promote to Admin'}
+                                      </Button>
+
+                                      {/* Deactivate / Reactivate Button */}
+                                      <Button
+                                        variant={member.isActive ? 'secondary' : 'primary'}
+                                        size="xs"
+                                        onClick={() =>
+                                          setStaffStatusTarget({
+                                            staff: member,
+                                            targetActive: !member.isActive,
+                                          })
+                                        }
+                                        disabled={isCurrentUser}
+                                        icon={member.isActive ? Power : Check}
+                                        title={isCurrentUser ? "You cannot deactivate your own account" : member.isActive ? "Deactivate account" : "Reactivate account"}
+                                      >
+                                        {member.isActive ? 'Deactivate' : 'Reactivate'}
+                                      </Button>
+                                    </div>
+                                  </td>
+                                )}
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
+
+                {/* Pending Invitations Section (Admin Only) */}
+                {isAdmin && pendingInvitations.length > 0 && (
+                  <div className="pt-4 border-t border-[#E1E6E9] space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <Clock size={16} className="text-[#85949F]" />
+                        <h4 className="text-xs font-bold text-[#25313B] uppercase tracking-wider">
+                          Pending Invitations ({pendingInvitations.length})
+                        </h4>
+                      </div>
+                    </div>
+
+                    <div className="overflow-x-auto rounded-xl border border-[#E1E6E9] bg-white">
+                      <table className="w-full text-left text-xs">
+                        <thead className="bg-[#F8FAFB] border-b border-[#E1E6E9] text-[#64717B] font-semibold">
+                          <tr>
+                            <th className="px-4 py-2.5">Email</th>
+                            <th className="px-4 py-2.5">Invited Name</th>
+                            <th className="px-4 py-2.5">Role</th>
+                            <th className="px-4 py-2.5">Sent On</th>
+                            <th className="px-4 py-2.5 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#E1E6E9]">
+                          {pendingInvitations.map((invite) => (
+                            <tr key={invite.id} className="hover:bg-[#F9FAFB]">
+                              <td className="px-4 py-2.5 font-medium text-[#25313B]">{invite.email}</td>
+                              <td className="px-4 py-2.5 text-[#64717B]">{invite.fullName}</td>
+                              <td className="px-4 py-2.5">
+                                <Badge variant="default">Staff</Badge>
+                              </td>
+                              <td className="px-4 py-2.5 text-[#64717B] text-[11px]">
+                                {invite.createdAt ? new Date(invite.createdAt).toLocaleDateString('en-IN') : '—'}
+                              </td>
+                              <td className="px-4 py-2.5 text-right">
+                                <div className="flex items-center justify-end gap-1.5">
+                                  <Button
+                                    variant="secondary"
+                                    size="xs"
+                                    onClick={() => handleResendInvitationAction(invite)}
+                                    disabled={resendingInviteId === invite.id}
+                                  >
+                                    {resendingInviteId === invite.id ? 'Resending...' : 'Resend'}
+                                  </Button>
+                                  <Button
+                                    variant="danger"
+                                    size="xs"
+                                    onClick={() => handleRevokeInvitationAction(invite.id)}
+                                    disabled={revokingInviteId === invite.id}
+                                  >
+                                    {revokingInviteId === invite.id ? 'Revoking...' : 'Revoke'}
+                                  </Button>
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {/* Recent Security Activity Audit (Admin Only) */}
+                {isAdmin && securityAuditLogs.length > 0 && (
+                  <div className="pt-4 border-t border-[#E1E6E9] space-y-2.5">
+                    <div className="flex items-center gap-2 text-xs font-bold text-[#25313B] uppercase tracking-wider">
+                      <History size={14} className="text-[#85949F]" />
+                      <span>Recent Security Activity</span>
+                    </div>
+                    <div className="bg-[#F8FAFB] rounded-xl border border-[#E1E6E9] p-3 divide-y divide-[#E1E6E9] max-h-48 overflow-y-auto">
+                      {securityAuditLogs.slice(0, 5).map((log) => (
+                        <div key={log.id} className="py-2 first:pt-0 last:pb-0 flex items-center justify-between text-xs">
+                          <div>
+                            <span className="font-semibold text-[#25313B] capitalize">
+                              {log.action ? log.action.replace(/_/g, ' ') : 'Security Event'}
+                            </span>
+                            {log.details?.target_email && (
+                              <span className="text-[#64717B] ml-1.5">({log.details.target_email})</span>
+                            )}
+                          </div>
+                          <span className="text-[11px] text-[#85949F]">
+                            {log.created_at ? new Date(log.created_at).toLocaleString('en-IN') : '—'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </Card>
           )}
@@ -1131,6 +1476,32 @@ export default function Settings() {
           </div>
         </Modal>
       )}
+
+      {/* Invite Staff Modal (Phase 5) */}
+      <InviteStaffModal
+        isOpen={inviteStaffOpen}
+        onClose={() => setInviteStaffOpen(false)}
+        onInvite={handleInviteStaffAction}
+      />
+
+      {/* Staff Status Confirmation Modal (Phase 5: Deactivate / Reactivate) */}
+      <StaffStatusModal
+        isOpen={Boolean(staffStatusTarget)}
+        onClose={() => setStaffStatusTarget(null)}
+        staffMember={staffStatusTarget?.staff}
+        targetActive={staffStatusTarget?.targetActive}
+        onConfirm={handleConfirmStaffStatus}
+      />
+
+      {/* Staff Role Confirmation Modal (Phase 5: Admin <-> Staff) */}
+      <StaffRoleModal
+        isOpen={Boolean(staffRoleTarget)}
+        onClose={() => setStaffRoleTarget(null)}
+        staffMember={staffRoleTarget?.staff}
+        targetRole={staffRoleTarget?.targetRole}
+        isSelf={staffRoleTarget?.staff?.id === user?.id}
+        onConfirm={handleConfirmStaffRole}
+      />
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
-import { Dumbbell, Mail, CheckCircle, AlertCircle, RefreshCw, LogOut } from 'lucide-react';
+import { Dumbbell, Mail, CheckCircle, AlertCircle, RefreshCw, LogOut, ShieldAlert } from 'lucide-react';
 import { AppProvider, useAuth } from './context/AppContext';
 import { AppLayout } from './components/layout/AppLayout';
 import { Button } from './components/ui/Button';
@@ -141,10 +141,30 @@ function EmailVerificationNotice() {
 }
 
 /**
- * Route guard enforcing authenticated sessions with verified email and valid role
+ * Screen displayed when an authenticated user does not possess the required role
  */
-function ProtectedRoute({ children }) {
-  const { isAuthenticated, isEmailUnverified, authLoading } = useAuth();
+function AccessDeniedScreen() {
+  return (
+    <div className="min-h-[60vh] flex flex-col items-center justify-center p-6 text-center space-y-3">
+      <div className="w-12 h-12 rounded-2xl bg-red-50 border border-red-200 text-red-600 flex items-center justify-center shadow-xs">
+        <ShieldAlert size={24} />
+      </div>
+      <h2 className="text-base font-bold text-[#25313B]">Access Restricted</h2>
+      <p className="text-xs text-[#64717B] max-w-sm">
+        This section is reserved for administrators only. Your current staff account does not possess permission to access this resource.
+      </p>
+      <Button variant="primary" size="sm" onClick={() => window.location.href = '/'}>
+        Return to Dashboard
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * Route guard enforcing authenticated sessions with verified email and optional role requirements
+ */
+function ProtectedRoute({ children, requiredRole }) {
+  const { isAuthenticated, isEmailUnverified, authLoading, role } = useAuth();
   const location = useLocation();
 
   if (authLoading) {
@@ -158,6 +178,15 @@ function ProtectedRoute({ children }) {
 
   if (!isAuthenticated) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  // Enforce role-based access if route specifies requiredRole
+  if (requiredRole && role !== requiredRole) {
+    return (
+      <AppLayout>
+        <AccessDeniedScreen />
+      </AppLayout>
+    );
   }
 
   return <AppLayout>{children}</AppLayout>;
@@ -194,7 +223,7 @@ export default function App() {
           <Route path="/members" element={<ProtectedRoute><Members /></ProtectedRoute>} />
           <Route path="/members/:id" element={<ProtectedRoute><MemberProfile /></ProtectedRoute>} />
           <Route path="/personal-training" element={<ProtectedRoute><PersonalTraining /></ProtectedRoute>} />
-          <Route path="/payments" element={<ProtectedRoute><Payments /></ProtectedRoute>} />
+          <Route path="/payments" element={<ProtectedRoute requiredRole="admin"><Payments /></ProtectedRoute>} />
           <Route path="/checkins" element={<ProtectedRoute><CheckIns /></ProtectedRoute>} />
           <Route path="/attention" element={<ProtectedRoute><Attention /></ProtectedRoute>} />
           <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />

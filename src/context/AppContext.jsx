@@ -71,6 +71,17 @@ import {
   DEFAULT_REMINDER_SETTINGS,
 } from '../services/reminderSettingsService';
 import {
+  getStaffRoster as getStaffRosterService,
+  inviteStaffMember as inviteStaffMemberService,
+  updateStaffRole as updateStaffRoleService,
+  toggleStaffStatus as toggleStaffStatusService,
+  getPendingInvitations as getPendingInvitationsService,
+  revokeInvitation as revokeInvitationService,
+  resendInvitation as resendInvitationService,
+  getSecurityAuditLogs as getSecurityAuditLogsService,
+  getStaffOperationalSummary as getStaffOperationalSummaryService,
+} from '../services/staffService';
+import {
   MEMBERS,
   PAYMENTS,
   CHECKINS,
@@ -228,6 +239,77 @@ export function AppProvider({ children }) {
     }
   }, []);
 
+  // Supabase Staff Roster & Security State (Phase 5)
+  const [staffRoster, setStaffRoster] = useState([]);
+  const [pendingInvitations, setPendingInvitations] = useState([]);
+  const [securityAuditLogs, setSecurityAuditLogs] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffError, setStaffError] = useState(null);
+
+  const fetchStaffData = useCallback(async () => {
+    setStaffLoading(true);
+    setStaffError(null);
+    try {
+      const [rosterRes, invitesRes, auditRes] = await Promise.all([
+        getStaffRosterService(),
+        getPendingInvitationsService(),
+        getSecurityAuditLogsService(),
+      ]);
+
+      if (rosterRes.data) setStaffRoster(rosterRes.data);
+      if (invitesRes.data) setPendingInvitations(invitesRes.data);
+      if (auditRes.data) setSecurityAuditLogs(auditRes.data);
+
+      if (rosterRes.error) {
+        setStaffError(rosterRes.error.message || 'Failed to load staff roster.');
+      }
+    } catch (err) {
+      setStaffError(err instanceof Error ? err.message : 'Unexpected error loading staff security data.');
+    } finally {
+      setStaffLoading(false);
+    }
+  }, []);
+
+  const inviteStaffMember = useCallback(async ({ email, fullName }) => {
+    const res = await inviteStaffMemberService({ email, fullName });
+    if (!res.error) {
+      await fetchStaffData();
+    }
+    return res;
+  }, [fetchStaffData]);
+
+  const updateStaffRole = useCallback(async ({ userId, role: newRole }) => {
+    const res = await updateStaffRoleService({ userId, role: newRole });
+    if (!res.error) {
+      await fetchStaffData();
+    }
+    return res;
+  }, [fetchStaffData]);
+
+  const toggleStaffStatus = useCallback(async ({ userId, isActive }) => {
+    const res = await toggleStaffStatusService({ userId, isActive });
+    if (!res.error) {
+      await fetchStaffData();
+    }
+    return res;
+  }, [fetchStaffData]);
+
+  const revokeInvitation = useCallback(async ({ invitationId }) => {
+    const res = await revokeInvitationService({ invitationId });
+    if (!res.error) {
+      await fetchStaffData();
+    }
+    return res;
+  }, [fetchStaffData]);
+
+  const resendInvitation = useCallback(async ({ invitationId, email, fullName }) => {
+    const res = await resendInvitationService({ invitationId, email, fullName });
+    if (!res.error) {
+      await fetchStaffData();
+    }
+    return res;
+  }, [fetchStaffData]);
+
   // ---------------------------------------------------------------------------
   // Supabase Gym Info Fetch (Phase 1 — Gym Profile & Info synchronization)
   // ---------------------------------------------------------------------------
@@ -281,6 +363,14 @@ export function AppProvider({ children }) {
   const [paymentsError, setPaymentsError] = useState(null);
 
   const fetchPayments = useCallback(async () => {
+    // Financial isolation: staff accounts must never load the payments ledger
+    if (role !== 'admin') {
+      setPayments([]);
+      setPaymentsLoading(false);
+      setPaymentsError(null);
+      return;
+    }
+
     setPaymentsLoading(true);
     setPaymentsError(null);
     try {
@@ -296,7 +386,7 @@ export function AppProvider({ children }) {
     } finally {
       setPaymentsLoading(false);
     }
-  }, []);
+  }, [role]);
 
   // Supabase Database Personal Training State
   const [ptLoading, setPtLoading] = useState(false);
@@ -659,21 +749,31 @@ export function AppProvider({ children }) {
       setPtPackages([]);
       setAllPtPackages([]);
       setReminderSettings(DEFAULT_REMINDER_SETTINGS);
+      setStaffRoster([]);
+      setPendingInvitations([]);
+      setSecurityAuditLogs([]);
       setAuthLoading(false);
     }
   }, []);
 
   // Fetch active membership plans, members, payments, PT data, attendance, notifications, followups,
-  // PT packages, reminder settings, and gym profile whenever session is authenticated and authorized
+  // PT packages, reminder settings, staff data, and gym profile whenever session is authenticated and authorized
   useEffect(() => {
     if (session?.user && session.user.email_confirmed_at && isValidRole(role)) {
       fetchGymInfo();
       fetchPlans();
       fetchMembers();
-      fetchPayments();
+      if (role === 'admin') {
+        fetchPayments();
+      } else {
+        setPayments([]);
+        setPaymentsLoading(false);
+        setPaymentsError(null);
+      }
       fetchPtData();
       fetchPtPackages();
       fetchReminderSettingsData();
+      fetchStaffData();
       fetchCheckins();
       fetchNotifications();
       fetchFollowups();
@@ -1740,6 +1840,9 @@ export function AppProvider({ children }) {
     setGymInfoMigrationPending(false);
     setMembershipPlans([]);
     setAllMembershipPlans([]);
+    setStaffRoster([]);
+    setPendingInvitations([]);
+    setSecurityAuditLogs([]);
   }, []);
 
   const isEmailVerified = Boolean(user?.email_confirmed_at);
@@ -1847,6 +1950,21 @@ export function AppProvider({ children }) {
     gymInfoLoading, gymInfoError,
     gymInfoMigrationPending,
     refreshGymInfo: fetchGymInfo,
+
+    // Staff & Security State (Phase 5: Supabase public.profiles, staff_invitations, security_audit_logs)
+    staffRoster,
+    pendingInvitations,
+    securityAuditLogs,
+    staffLoading,
+    staffError,
+    refreshStaffRoster: fetchStaffData,
+    inviteStaffMember,
+    updateStaffRole,
+    toggleStaffStatus,
+    revokeInvitation,
+    resendInvitation,
+    getStaffOperationalSummary: getStaffOperationalSummaryService,
+
     renewMember,
     resetToDemoData,
   };

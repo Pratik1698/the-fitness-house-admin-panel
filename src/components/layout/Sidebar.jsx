@@ -49,6 +49,24 @@ export function Sidebar({ isOpen, onToggle }) {
     if (window.innerWidth < 1024) onToggle?.();
   };
 
+  const filteredNavGroups = navGroups.map(group => ({
+    ...group,
+    items: group.items
+      .filter(item => {
+        // Financial isolation: staff cannot access Payments & Dues ledger
+        if (item.id === 'payments' && role !== 'admin') {
+          return false;
+        }
+        return true;
+      })
+      .map(item => {
+        if (item.id === 'reports' && role !== 'admin') {
+          return { ...item, label: 'Operational Reports' };
+        }
+        return item;
+      }),
+  }));
+
   return (
     <>
       {/* Mobile Backdrop Overlay */}
@@ -93,7 +111,7 @@ export function Sidebar({ isOpen, onToggle }) {
 
         {/* Navigation Links */}
         <nav className="flex-1 px-3.5 py-4 overflow-y-auto space-y-6">
-          {navGroups.map((group, groupIdx) => (
+          {filteredNavGroups.map((group, groupIdx) => (
             <div key={groupIdx} className="space-y-1">
               <p className="px-3 text-[11px] font-bold text-[#64717B] uppercase tracking-wider mb-2">
                 {group.group}

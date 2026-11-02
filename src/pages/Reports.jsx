@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useApp } from '../context/AppContext';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -30,17 +30,25 @@ import {
   Download, FileSpreadsheet, Calendar, IndianRupee,
   Users, UserCheck, TrendingUp, Dumbbell, Award, AlertCircle,
   AlertTriangle, CheckCircle2, Clock, CreditCard, ArrowUpRight,
-  Search, RotateCcw, Check, ExternalLink, Filter
+  Search, RotateCcw, Check, ExternalLink, Filter, Lock, ShieldAlert
 } from 'lucide-react';
 
 export default function Reports() {
   const navigate = useNavigate();
-  const { members, payments, checkins, ptClients, ptSessions } = useApp();
+  const { members, payments, checkins, ptClients, ptSessions, role, isAdmin } = useApp();
 
   const todayStr = useMemo(() => getLocalDateString(), []);
 
   // Global Report Filters
-  const [activeTab, setActiveTab] = useState('overview'); // 'overview' | 'finance' | 'dues' | 'membership' | 'attendance' | 'pt'
+  // For staff: default to 'attendance' since financial overview is restricted to admins
+  const [activeTab, setActiveTab] = useState(isAdmin ? 'overview' : 'attendance'); // 'overview' | 'finance' | 'dues' | 'membership' | 'attendance' | 'pt'
+
+  // Enforce staff restriction: if non-admin tries to land on financial tabs, clamp to 'attendance'
+  useEffect(() => {
+    if (!isAdmin && (activeTab === 'overview' || activeTab === 'finance' || activeTab === 'dues')) {
+      setActiveTab('attendance');
+    }
+  }, [isAdmin, activeTab]);
   const [dateRangePreset, setDateRangePreset] = useState('this_month'); // 'all' | 'today' | '7days' | '30days' | 'this_month' | 'last_month' | 'this_year' | 'custom'
   const [customStart, setCustomStart] = useState('');
   const [customEnd, setCustomEnd] = useState('');
@@ -497,13 +505,22 @@ export default function Reports() {
   // CSV Export Handlers
   // ==========================================
   const triggerExport = (type) => {
+    // Strictly block financial exports for non-admin staff
+    if (!isAdmin && (type === 'transactions' || type === 'dues')) {
+      setExportNotice('Access Restricted: Financial records export is reserved for administrators only.');
+      setTimeout(() => setExportNotice(null), 4000);
+      return;
+    }
+
     const dateStamp = todayStr;
     switch (type) {
       case 'transactions':
+        if (!isAdmin) return;
         exportTransactionsCSV(inRangePayments, `tfh_transactions_${dateStamp}`);
         setExportNotice(`Exported ${inRangePayments.length} transactions to CSV.`);
         break;
       case 'dues':
+        if (!isAdmin) return;
         exportOutstandingDuesCSV(filteredDuesMembers, `tfh_outstanding_dues_${dateStamp}`);
         setExportNotice(`Exported ${filteredDuesMembers.length} outstanding dues records to CSV.`);
         break;
@@ -516,18 +533,42 @@ export default function Reports() {
         setExportNotice(`Exported ${ptClients.length} PT client records to CSV.`);
         break;
       default:
-        exportTransactionsCSV(inRangePayments, `tfh_report_${dateStamp}`);
-        setExportNotice('Report exported to CSV.');
+        if (isAdmin) {
+          exportTransactionsCSV(inRangePayments, `tfh_report_${dateStamp}`);
+          setExportNotice('Report exported to CSV.');
+        } else {
+          exportAttendanceCSV(inRangeCheckins, `tfh_attendance_${dateStamp}`);
+          setExportNotice(`Exported ${inRangeCheckins.length} attendance records to CSV.`);
+        }
     }
     setTimeout(() => setExportNotice(null), 5000);
   };
+
+  const reportTabs = isAdmin
+    ? [
+        { id: 'overview', label: 'Executive Overview' },
+        { id: 'finance', label: 'Financial & Revenue' },
+        { id: 'dues', label: `Outstanding Dues (${membersWithDues.length})` },
+        { id: 'membership', label: 'Membership Analytics' },
+        { id: 'attendance', label: 'Attendance Trends' },
+        { id: 'pt', label: 'Personal Training' },
+      ]
+    : [
+        { id: 'attendance', label: 'Attendance & Check-in Trends' },
+        { id: 'pt', label: 'Personal Training Operations' },
+        { id: 'membership', label: 'Membership Operations' },
+      ];
 
   return (
     <div className="space-y-6">
       {/* Page Header */}
       <PageHeader
-        title="Reports & Business Analytics"
-        description="Comprehensive audit of gym revenue streams, outstanding member balances, attendance patterns, and personal training operations."
+        title={isAdmin ? "Reports & Business Analytics" : "Operational Reports & Activity"}
+        description={
+          isAdmin
+            ? "Comprehensive audit of gym revenue streams, outstanding member balances, attendance patterns, and personal training operations."
+            : "Operational overview of gym attendance patterns, daily check-in activity, and personal training session completion."
+        }
         actions={
           <div className="flex items-center gap-2 flex-wrap">
             {/* Date Range Selector */}
@@ -566,7 +607,7 @@ export default function Reports() {
               </div>
             )}
 
-            {/* Global CSV Download */}
+            {/* CSV Download (Restricted to non-financial datasets for staff) */}
             <Button
               variant="secondary"
               icon={FileSpreadsheet}
@@ -574,15 +615,29 @@ export default function Reports() {
                 if (activeTab === 'dues') triggerExport('dues');
                 else if (activeTab === 'attendance') triggerExport('attendance');
                 else if (activeTab === 'pt') triggerExport('pt');
-                else triggerExport('transactions');
+                else if (isAdmin) triggerExport('transactions');
+                else triggerExport('attendance');
               }}
-              title="Export filtered records to CSV"
+              title={isAdmin ? "Export filtered records to CSV" : "Export operational attendance records to CSV"}
             >
               Export CSV
             </Button>
           </div>
         }
       />
+
+      {/* Staff Operational View Notice Banner */}
+      {!isAdmin && (
+        <div className="p-3 bg-[#F8FAFB] border border-[#E1E6E9] rounded-xl text-xs text-[#64717B] flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Lock size={14} className="text-[#85949F] shrink-0" />
+            <span>
+              <strong>Staff Operational View:</strong> Displaying attendance, check-in activity, and member operations. Revenue collections, dues balances, and financial exports are restricted to administrators.
+            </span>
+          </div>
+          <Badge variant="default">Staff View</Badge>
+        </div>
+      )}
 
       {/* Export Notice Banner */}
       {exportNotice && (
@@ -597,14 +652,7 @@ export default function Reports() {
 
       {/* Report Module Tabs */}
       <div className="flex items-center gap-1 border-b border-[#E1E6E9] pb-px overflow-x-auto bg-white px-2 rounded-t-xl">
-        {[
-          { id: 'overview', label: 'Executive Overview' },
-          { id: 'finance', label: 'Financial & Revenue' },
-          { id: 'dues', label: `Outstanding Dues (${membersWithDues.length})` },
-          { id: 'membership', label: 'Membership Analytics' },
-          { id: 'attendance', label: 'Attendance Trends' },
-          { id: 'pt', label: 'Personal Training' },
-        ].map(tab => (
+        {reportTabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
@@ -1113,7 +1161,7 @@ export default function Reports() {
           {/* Plan Duration Distribution Table */}
           <Card>
             <CardHeader>
-              <CardTitle>Plan Duration Distribution & Revenue</CardTitle>
+              <CardTitle>{isAdmin ? "Plan Duration Distribution & Revenue" : "Plan Duration Distribution & Member Enrollment"}</CardTitle>
               <CardDescription>Overview of membership tiers preferred by gym members</CardDescription>
             </CardHeader>
             <div className="overflow-x-auto mt-2">
@@ -1122,10 +1170,10 @@ export default function Reports() {
                   <tr>
                     <th className="px-4 py-3">Plan Name</th>
                     <th className="px-4 py-3">Duration</th>
-                    <th className="px-4 py-3">Standard Fee</th>
+                    {isAdmin && <th className="px-4 py-3">Standard Fee</th>}
                     <th className="px-4 py-3">Total Enrolled</th>
                     <th className="px-4 py-3">Active Now</th>
-                    <th className="px-4 py-3 text-right">Cumulative Collected</th>
+                    {isAdmin && <th className="px-4 py-3 text-right">Cumulative Collected</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E1E6E9]">
@@ -1133,10 +1181,10 @@ export default function Reports() {
                     <tr key={plan.id} className="hover:bg-[#F5F7F8]/50">
                       <td className="px-4 py-3 font-semibold text-[#25313B]">{plan.name}</td>
                       <td className="px-4 py-3 text-xs text-[#64717B]">{plan.duration}</td>
-                      <td className="px-4 py-3 text-xs text-[#25313B] font-medium">{formatINR(plan.price)}</td>
+                      {isAdmin && <td className="px-4 py-3 text-xs text-[#25313B] font-medium">{formatINR(plan.price)}</td>}
                       <td className="px-4 py-3 text-xs font-bold text-[#25313B]">{plan.enrolledCount} members</td>
                       <td className="px-4 py-3 text-xs font-bold text-[#16845B]">{plan.activeCount} active</td>
-                      <td className="px-4 py-3 text-right font-bold text-[#25313B] tabular-nums">{formatINR(plan.totalRevenue)}</td>
+                      {isAdmin && <td className="px-4 py-3 text-right font-bold text-[#25313B] tabular-nums">{formatINR(plan.totalRevenue)}</td>}
                     </tr>
                   ))}
                 </tbody>

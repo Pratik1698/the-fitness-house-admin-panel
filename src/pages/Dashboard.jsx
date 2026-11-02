@@ -23,6 +23,8 @@ import {
 export default function Dashboard() {
   const navigate = useNavigate();
   const {
+    isAdmin,
+    role,
     members,
     payments,
     checkins,
@@ -617,15 +619,26 @@ export default function Dashboard() {
           onClick={() => navigate('/members?status=active')}
         />
 
-        {/* Card 3: Pending Dues */}
-        <KPICard
-          icon={CreditCard}
-          label="Pending Dues"
-          value={membersLoading ? '...' : formatINR(totalOutstanding)}
-          subtitle={`${pendingPayments.length} member${pendingPayments.length === 1 ? '' : 's'} with bal.`}
-          variant={totalOutstanding > 0 ? 'warning' : 'default'}
-          onClick={() => navigate('/payments?tab=pending')}
-        />
+        {/* Card 3: Pending Dues (Admin) or Today's Check-ins (Staff) */}
+        {isAdmin ? (
+          <KPICard
+            icon={CreditCard}
+            label="Pending Dues"
+            value={membersLoading ? '...' : formatINR(totalOutstanding)}
+            subtitle={`${pendingPayments.length} member${pendingPayments.length === 1 ? '' : 's'} with bal.`}
+            variant={totalOutstanding > 0 ? 'warning' : 'default'}
+            onClick={() => navigate('/payments?tab=pending')}
+          />
+        ) : (
+          <KPICard
+            icon={LogIn}
+            label="Today's Check-ins"
+            value={checkinsLoading ? '...' : todayCheckins.length}
+            subtitle={`${todayCheckins.length} visit${todayCheckins.length === 1 ? '' : 's'} recorded`}
+            variant="accent"
+            onClick={() => navigate('/checkins')}
+          />
+        )}
 
         {/* Card 4: Expiring Soon */}
         <KPICard
@@ -637,25 +650,47 @@ export default function Dashboard() {
           onClick={() => navigate('/notifications?filter=expiry')}
         />
 
-        {/* Card 5: Today's Collection */}
-        <KPICard
-          icon={IndianRupee}
-          label="Today's Collection"
-          value={paymentsLoading ? '...' : formatINR(todayCollection)}
-          subtitle={`${todayPayments.length} completed receipt${todayPayments.length === 1 ? '' : 's'}`}
-          variant="accent"
-          onClick={() => navigate('/payments')}
-        />
+        {/* Card 5: Today's Collection (Admin) or Active PT Clients (Staff) */}
+        {isAdmin ? (
+          <KPICard
+            icon={IndianRupee}
+            label="Today's Collection"
+            value={paymentsLoading ? '...' : formatINR(todayCollection)}
+            subtitle={`${todayPayments.length} completed receipt${todayPayments.length === 1 ? '' : 's'}`}
+            variant="accent"
+            onClick={() => navigate('/payments')}
+          />
+        ) : (
+          <KPICard
+            icon={Dumbbell}
+            label="Active PT Clients"
+            value={ptLoading ? '...' : ptClients.length}
+            subtitle={`${ptClients.length} enrolled client${ptClients.length === 1 ? '' : 's'}`}
+            variant="default"
+            onClick={() => navigate('/personal-training')}
+          />
+        )}
 
-        {/* Card 6: This Month */}
-        <KPICard
-          icon={Calendar}
-          label="This Month"
-          value={paymentsLoading ? '...' : formatINR(monthCollection)}
-          subtitle={`${monthPayments.length} transaction${monthPayments.length === 1 ? '' : 's'} this month`}
-          variant="default"
-          onClick={() => navigate('/payments')}
-        />
+        {/* Card 6: This Month Collection (Admin) or Total PT Sessions (Staff) */}
+        {isAdmin ? (
+          <KPICard
+            icon={Calendar}
+            label="This Month"
+            value={paymentsLoading ? '...' : formatINR(monthCollection)}
+            subtitle={`${monthPayments.length} transaction${monthPayments.length === 1 ? '' : 's'} this month`}
+            variant="default"
+            onClick={() => navigate('/payments')}
+          />
+        ) : (
+          <KPICard
+            icon={Activity}
+            label="PT Sessions"
+            value={ptLoading ? '...' : ptSessions.length}
+            subtitle={`${ptSessions.length} session${ptSessions.length === 1 ? '' : 's'} recorded`}
+            variant="default"
+            onClick={() => navigate('/personal-training')}
+          />
+        )}
       </div>
 
       {/* 3. Balanced Two-Column Layout */}
@@ -1128,49 +1163,54 @@ export default function Dashboard() {
                 <span className="text-base font-bold text-[#25313B] tabular-nums">{activeMembers.length}</span>
               </div>
 
-              {/* Row 2: Today's Collection */}
-              <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
-                    <IndianRupee size={15} />
+              {/* Financial Rows (Admin Only) */}
+              {isAdmin && (
+                <>
+                  {/* Row 2: Today's Collection */}
+                  <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
+                        <IndianRupee size={15} />
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-[#25313B] block">Today's Collection</span>
+                        <span className="text-[11px] text-[#64717B]">{todayPayments.length} completed receipt{todayPayments.length === 1 ? '' : 's'}</span>
+                      </div>
+                    </div>
+                    <span className="text-base font-bold text-[#16845B] tabular-nums">{formatINR(todayCollection)}</span>
                   </div>
-                  <div>
-                    <span className="text-xs font-semibold text-[#25313B] block">Today's Collection</span>
-                    <span className="text-[11px] text-[#64717B]">{todayPayments.length} completed receipt{todayPayments.length === 1 ? '' : 's'}</span>
-                  </div>
-                </div>
-                <span className="text-base font-bold text-[#16845B] tabular-nums">{formatINR(todayCollection)}</span>
-              </div>
 
-              {/* Row 3: This Month's Collection */}
-              <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
-                    <Calendar size={15} />
+                  {/* Row 3: This Month's Collection */}
+                  <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
+                        <Calendar size={15} />
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-[#25313B] block">This Month</span>
+                        <span className="text-[11px] text-[#64717B]">{monthPayments.length} completed transaction{monthPayments.length === 1 ? '' : 's'}</span>
+                      </div>
+                    </div>
+                    <span className="text-base font-bold text-[#16845B] tabular-nums">{formatINR(monthCollection)}</span>
                   </div>
-                  <div>
-                    <span className="text-xs font-semibold text-[#25313B] block">This Month</span>
-                    <span className="text-[11px] text-[#64717B]">{monthPayments.length} completed transaction{monthPayments.length === 1 ? '' : 's'}</span>
-                  </div>
-                </div>
-                <span className="text-base font-bold text-[#16845B] tabular-nums">{formatINR(monthCollection)}</span>
-              </div>
 
-              {/* Row 4: Pending Dues */}
-              <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-[#FFF2D8] text-[#A66A00] flex items-center justify-center shrink-0">
-                    <CreditCard size={15} />
+                  {/* Row 4: Pending Dues */}
+                  <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <div className="w-7 h-7 rounded-lg bg-[#FFF2D8] text-[#A66A00] flex items-center justify-center shrink-0">
+                        <CreditCard size={15} />
+                      </div>
+                      <div>
+                        <span className="text-xs font-semibold text-[#25313B] block">Pending Dues</span>
+                        <span className="text-[11px] text-[#64717B]">{pendingPayments.length} member{pendingPayments.length === 1 ? '' : 's'} with balance</span>
+                      </div>
+                    </div>
+                    <span className={`text-base font-bold tabular-nums ${totalOutstanding > 0 ? 'text-[#B42318]' : 'text-[#16845B]'}`}>
+                      {formatINR(totalOutstanding)}
+                    </span>
                   </div>
-                  <div>
-                    <span className="text-xs font-semibold text-[#25313B] block">Pending Dues</span>
-                    <span className="text-[11px] text-[#64717B]">{pendingPayments.length} member{pendingPayments.length === 1 ? '' : 's'} with balance</span>
-                  </div>
-                </div>
-                <span className={`text-base font-bold tabular-nums ${totalOutstanding > 0 ? 'text-[#B42318]' : 'text-[#16845B]'}`}>
-                  {formatINR(totalOutstanding)}
-                </span>
-              </div>
+                </>
+              )}
 
               {/* Row 5: PT Sessions Today */}
               <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
