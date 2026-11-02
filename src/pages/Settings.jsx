@@ -5,14 +5,14 @@ import { Card, CardHeader, CardTitle, CardDescription } from '../components/ui/C
 import { Button } from '../components/ui/Button';
 import { Input, Select, Textarea } from '../components/ui/Input';
 import { Badge } from '../components/ui/Badge';
-import { PT_PACKAGES } from '../data/sampleData';
 import {
   Building2, CreditCard, Dumbbell, Bell, Shield, User,
   Check, Save, Clock, Phone, Mail, MapPin, Plus, Lock, Key,
-  AlertCircle, Loader2, Power,
+  AlertCircle, Loader2, Power, RefreshCw,
 } from 'lucide-react';
 import { ChangePasswordModal } from '../components/auth/ChangePasswordModal';
 import { PlanEditorModal } from '../components/settings/PlanEditorModal';
+import { PtPackageEditorModal } from '../components/settings/PtPackageEditorModal';
 import { Modal } from '../components/ui/Modal';
 
 export default function Settings() {
@@ -21,6 +21,10 @@ export default function Settings() {
     user, role,
     membershipPlans, allMembershipPlans, plansLoading, plansError, reloadPlans,
     createPlan, updatePlan, togglePlanStatus,
+    ptPackages, allPtPackages, ptPackagesLoading, ptPackagesError, reloadPtPackages,
+    createPtPackage, updatePtPackage, togglePtPackageStatus,
+    reminderSettings, reminderSettingsLoading, reminderSettingsError, reloadReminderSettings,
+    updateReminderSettings,
     isSupabaseConfigured,
   } = useApp();
 
@@ -34,6 +38,13 @@ export default function Settings() {
   const [planToToggle, setPlanToToggle] = useState(null);
   const [togglingPlanId, setTogglingPlanId] = useState(null);
 
+  // ── PT Packages modal & action state (Phase 3) ────────────────────────────
+  const [ptPackageModalOpen, setPtPackageModalOpen] = useState(false);
+  const [editingPtPackage, setEditingPtPackage] = useState(null);
+  const [ptPackageFeedback, setPtPackageFeedback] = useState(null);
+  const [ptPackageToToggle, setPtPackageToToggle] = useState(null);
+  const [togglingPtPackageId, setTogglingPtPackageId] = useState(null);
+
   // ── Gym Profile form state ─────────────────────────────────────────────────
   const [gymForm, setGymForm] = useState({
     name:      gymInfo.name      ?? '',
@@ -46,16 +57,34 @@ export default function Settings() {
     timings:   gymInfo.timings   ?? '',
   });
 
-  // Notification toggles (demo state preserved)
+  // ── Reminder Automation state (Phase 4: Supabase-backed) ───────────────────
   const [reminders, setReminders] = useState({
-    fiveDay: true,
-    threeDay: true,
-    oneDay: true,
-    expiryDay: true,
-    paymentAlerts: true,
-    autoWhatsApp: true,
-    smsFallback: true,
+    fiveDay:       Boolean(reminderSettings?.fiveDay ?? true),
+    threeDay:      Boolean(reminderSettings?.threeDay ?? true),
+    oneDay:        Boolean(reminderSettings?.oneDay ?? true),
+    expiryDay:     Boolean(reminderSettings?.expiryDay ?? true),
+    paymentAlerts: Boolean(reminderSettings?.paymentAlerts ?? true),
+    autoWhatsApp:  Boolean(reminderSettings?.autoWhatsApp ?? false),
+    smsFallback:   Boolean(reminderSettings?.smsFallback ?? false),
   });
+
+  const remindersDirty = useRef(false);
+  const [reminderFeedback, setReminderFeedback] = useState(null);
+  const [savingReminders, setSavingReminders] = useState(false);
+
+  useEffect(() => {
+    if (!remindersDirty.current && reminderSettings) {
+      setReminders({
+        fiveDay:       Boolean(reminderSettings.fiveDay),
+        threeDay:      Boolean(reminderSettings.threeDay),
+        oneDay:        Boolean(reminderSettings.oneDay),
+        expiryDay:     Boolean(reminderSettings.expiryDay),
+        paymentAlerts: Boolean(reminderSettings.paymentAlerts),
+        autoWhatsApp:  Boolean(reminderSettings.autoWhatsApp),
+        smsFallback:   Boolean(reminderSettings.smsFallback),
+      });
+    }
+  }, [reminderSettings]);
 
   // Track whether the user has made unsaved edits so we do not overwrite them
   // when a background refresh comes in after a successful save.
@@ -187,7 +216,117 @@ export default function Settings() {
     }
   };
 
+  // ── PT Package Action Handlers (Phase 3) ───────────────────────────────────
+  const handleOpenCreatePtPackage = () => {
+    if (!isAdmin) return;
+    setEditingPtPackage(null);
+    setPtPackageModalOpen(true);
+  };
+
+  const handleOpenEditPtPackage = (pkg) => {
+    if (!isAdmin) return;
+    setEditingPtPackage(pkg);
+    setPtPackageModalOpen(true);
+  };
+
+  const handleSavePtPackage = async (pkgData, pkgId) => {
+    if (!isAdmin) {
+      return { error: 'Permission denied: only administrators can modify PT packages.' };
+    }
+    try {
+      const res = pkgId
+        ? await updatePtPackage(pkgId, pkgData)
+        : await createPtPackage(pkgData);
+
+      if (res.error) {
+        return { error: res.error.message || 'Failed to save PT package.' };
+      }
+
+      setPtPackageFeedback({
+        type: 'success',
+        message: pkgId
+          ? `PT package "${res.data?.name || pkgData.name}" updated successfully.`
+          : `PT package "${res.data?.name || pkgData.name}" created and published.`,
+      });
+      setTimeout(() => setPtPackageFeedback(null), 4000);
+      return { success: true };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'An unexpected error occurred while saving package.' };
+    }
+  };
+
+  const handleConfirmTogglePtPackageStatus = async () => {
+    if (!ptPackageToToggle || !isAdmin) return;
+    const { pkg, targetActive } = ptPackageToToggle;
+    setTogglingPtPackageId(pkg.id);
+    try {
+      const res = await togglePtPackageStatus(pkg.id, pkg.isActive || pkg.is_active);
+      if (res.error) {
+        setPtPackageFeedback({
+          type: 'error',
+          message: res.error.message || `Failed to ${targetActive ? 'activate' : 'deactivate'} PT package.`,
+        });
+      } else {
+        setPtPackageFeedback({
+          type: 'success',
+          message: `PT package "${pkg.name}" has been ${targetActive ? 'activated' : 'deactivated'}. ${
+            targetActive
+              ? 'It is now available for personal training assignments.'
+              : 'It is now hidden from new assignments.'
+          }`,
+        });
+        setTimeout(() => setPtPackageFeedback(null), 4000);
+      }
+    } catch (err) {
+      setPtPackageFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'Failed to update PT package status.',
+      });
+    } finally {
+      setTogglingPtPackageId(null);
+      setPtPackageToToggle(null);
+    }
+  };
+
+  // ── Reminder Automation Handlers (Phase 4) ─────────────────────────────────
+  const handleReminderToggle = (key, checked) => {
+    if (!isAdmin) return;
+    remindersDirty.current = true;
+    setReminderFeedback(null);
+    setReminders(prev => ({ ...prev, [key]: checked }));
+  };
+
+  const handleSaveReminders = async () => {
+    if (!isAdmin) return;
+    setSavingReminders(true);
+    setReminderFeedback(null);
+    try {
+      const res = await updateReminderSettings(reminders);
+      if (res.error) {
+        setReminderFeedback({
+          type: 'error',
+          message: res.error.message || 'Failed to save reminder preferences to Supabase.',
+        });
+      } else {
+        remindersDirty.current = false;
+        setReminderFeedback({
+          type: 'success',
+          message: 'Reminder preferences saved successfully to database.',
+        });
+        setTimeout(() => setReminderFeedback(null), 4000);
+      }
+    } catch (err) {
+      setReminderFeedback({
+        type: 'error',
+        message: err instanceof Error ? err.message : 'An unexpected error occurred saving preferences.',
+      });
+    } finally {
+      setSavingReminders(false);
+    }
+  };
+
   const displayPlans = allMembershipPlans && allMembershipPlans.length > 0 ? allMembershipPlans : membershipPlans;
+  const displayPtPackages = allPtPackages && allPtPackages.length > 0 ? allPtPackages : ptPackages;
 
   return (
     <div className="space-y-6">
@@ -536,36 +675,108 @@ export default function Settings() {
                 <div>
                   <CardTitle>Personal Training Packages</CardTitle>
                   <CardDescription>
-                    Trainer packages with session limits and validity caps.
+                    Trainer packages with session limits and validity caps stored in Supabase.
                   </CardDescription>
                 </div>
-                <Button size="sm" onClick={() => alert('New PT package configuration modal (Demo preview)')} icon={Plus}>
-                  Add PT Package
-                </Button>
+                {isAdmin && (
+                  <Button size="sm" onClick={handleOpenCreatePtPackage} icon={Plus}>
+                    Add PT Package
+                  </Button>
+                )}
               </CardHeader>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
-                {PT_PACKAGES.map(pkg => (
-                  <div key={pkg.id} className="p-4 rounded-xl border border-[#E1E6E9] bg-white flex flex-col justify-between">
-                    <div>
-                      <div className="flex items-center justify-between mb-2">
-                        <Badge variant="success">Active Tier</Badge>
-                        <span className="text-xs text-[#64717B] font-medium">{pkg.validity} days validity</span>
-                      </div>
-                      <h4 className="text-base font-bold text-[#25313B]">{pkg.name}</h4>
-                      <p className="text-xs text-[#64717B] mt-1">{pkg.sessions} one-on-one guided sessions</p>
-                      <p className="text-2xl font-bold text-[#16845B] mt-3">₹{pkg.price.toLocaleString()}</p>
-                    </div>
+              {/* PT Package Feedback Banner */}
+              {ptPackageFeedback && (
+                <div className={`mt-3 flex items-center gap-2 p-3 rounded-lg text-xs font-medium ${
+                  ptPackageFeedback.type === 'error'
+                    ? 'bg-[#FEF3F2] text-[#B42318] border border-[#FECDCA]'
+                    : 'bg-[#E8F5EE] text-[#16845B] border border-[#A6F4C5]'
+                }`}>
+                  <CheckCircle2 size={16} className={ptPackageFeedback.type === 'error' ? 'text-[#B42318]' : 'text-[#16845B]'} />
+                  <span>{ptPackageFeedback.message}</span>
+                </div>
+              )}
 
-                    <div className="mt-4 pt-3 border-t border-[#E1E6E9] flex items-center justify-between">
-                      <span className="text-xs text-[#64717B]">₹{Math.round(pkg.price / pkg.sessions)} / session</span>
-                      <Button variant="secondary" size="sm" onClick={() => alert(`Edit ${pkg.name}`)}>
-                        Edit
-                      </Button>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              {ptPackagesLoading ? (
+                <div className="py-12 flex flex-col items-center justify-center text-xs text-[#64717B]">
+                  <Loader2 size={24} className="animate-spin text-[#16845B] mb-2" />
+                  <span>Loading personal training packages from database...</span>
+                </div>
+              ) : ptPackagesError ? (
+                <div className="py-8 text-center text-xs text-[#B42318]">
+                  <p className="font-semibold mb-2">Failed to load PT packages: {ptPackagesError}</p>
+                  <Button variant="secondary" size="sm" onClick={reloadPtPackages}>
+                    Retry
+                  </Button>
+                </div>
+              ) : displayPtPackages.length === 0 ? (
+                <div className="py-10 text-center text-xs text-[#64717B]">
+                  No personal training packages found in database. {isAdmin ? 'Click "Add PT Package" to create one.' : ''}
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+                  {displayPtPackages.map(pkg => {
+                    const isActive = pkg.isActive !== undefined ? pkg.isActive : pkg.is_active;
+                    const total = pkg.totalSessions || pkg.total_sessions || pkg.sessions || 0;
+                    const validity = pkg.validityDays || pkg.validity_days || pkg.validity || 30;
+                    const ratePerSession = total > 0 ? Math.round(pkg.price / total) : 0;
+
+                    return (
+                      <div
+                        key={pkg.id}
+                        className={`p-4 rounded-xl border border-[#E1E6E9] bg-white flex flex-col justify-between transition-all ${
+                          !isActive ? 'bg-[#F9FAFA] opacity-75 border-dashed' : 'hover:border-[#16845B]/40'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <Badge variant={isActive ? "success" : "default"}>
+                              {isActive ? "Active Tier" : "Inactive Tier"}
+                            </Badge>
+                            <span className="text-xs text-[#64717B] font-medium">{validity} days validity</span>
+                          </div>
+                          <h4 className="text-base font-bold text-[#25313B]">{pkg.name}</h4>
+                          <p className="text-xs text-[#64717B] mt-1">{total} one-on-one guided sessions</p>
+                          {pkg.description && (
+                            <p className="text-xs text-[#64717B] mt-1.5 italic line-clamp-2">{pkg.description}</p>
+                          )}
+                          <p className="text-2xl font-bold text-[#16845B] mt-3">₹{pkg.price.toLocaleString('en-IN')}</p>
+                        </div>
+
+                        <div className="mt-4 pt-3 border-t border-[#E1E6E9] flex items-center justify-between">
+                          <span className="text-xs text-[#64717B]">₹{ratePerSession} / session</span>
+                          {isAdmin ? (
+                            <div className="flex items-center gap-1.5">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleOpenEditPtPackage(pkg)}
+                                disabled={Boolean(togglingPtPackageId)}
+                              >
+                                Edit
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setPtPackageToToggle({ pkg, targetActive: !isActive })}
+                                disabled={Boolean(togglingPtPackageId)}
+                                className={isActive
+                                  ? "text-[#B42318] hover:text-[#911d13] hover:bg-[#FEF3F2]"
+                                  : "text-[#16845B] hover:text-[#126B4A] hover:bg-[#E8F5EE]"
+                                }
+                              >
+                                {isActive ? "Deactivate" : "Activate"}
+                              </Button>
+                            </div>
+                          ) : (
+                            <span className="text-xs text-[#64717B] italic">Read-Only</span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </Card>
           )}
 
@@ -579,31 +790,63 @@ export default function Settings() {
                     Enable or disable automatic reminders sent to members ahead of plan expiry.
                   </CardDescription>
                 </div>
-                <Button size="sm" onClick={() => alert('Reminder preferences saved successfully!')} icon={Save}>
-                  Save Preferences
-                </Button>
+                {isAdmin ? (
+                  <Button
+                    size="sm"
+                    onClick={handleSaveReminders}
+                    disabled={savingReminders}
+                    icon={savingReminders ? Loader2 : Save}
+                    className={savingReminders ? '[&>svg]:animate-spin' : ''}
+                  >
+                    {savingReminders ? 'Saving...' : 'Save Preferences'}
+                  </Button>
+                ) : (
+                  <span className="text-xs text-[#64717B] italic px-2 py-1 bg-gray-100 rounded">Read-Only View</span>
+                )}
               </CardHeader>
+
+              {/* Staff Read-Only Notice */}
+              {!isAdmin && (
+                <div className="mt-3 p-3 rounded-lg bg-[#F8FAFB] border border-[#E1E6E9] text-xs text-[#64717B] flex items-center gap-2">
+                  <Shield size={16} className="text-[#64717B] shrink-0" />
+                  <span>Viewing in read-only mode. Only administrators can save reminder preferences to Supabase.</span>
+                </div>
+              )}
+
+              {/* Reminder Feedback Banner */}
+              {reminderFeedback && (
+                <div className={`mt-3 flex items-center gap-2 p-3 rounded-lg text-xs font-medium ${
+                  reminderFeedback.type === 'error'
+                    ? 'bg-[#FEF3F2] text-[#B42318] border border-[#FECDCA]'
+                    : 'bg-[#E8F5EE] text-[#16845B] border border-[#A6F4C5]'
+                }`}>
+                  {reminderFeedback.type === 'error' ? <AlertCircle size={16} /> : <Check size={16} />}
+                  <span>{reminderFeedback.message}</span>
+                </div>
+              )}
 
               <div className="space-y-4 mt-4">
                 <div className="space-y-3">
                   <h4 className="text-xs font-bold uppercase tracking-wider text-[#64717B]">Expiry Alert Schedule</h4>
 
                   {[
-                    { key: 'fiveDay', label: '5 Days Before Expiry', desc: 'Send first courtesy reminder via WhatsApp' },
-                    { key: 'threeDay', label: '3 Days Before Expiry', desc: 'Send renewal prompt with current fee details' },
-                    { key: 'oneDay', label: '1 Day Before Expiry', desc: 'Urgent final alert before facility pass expires' },
-                    { key: 'expiryDay', label: 'On Expiry Date', desc: 'Send expiration notice and reactivation link' },
+                    { key: 'fiveDay', label: '5 Days Before Expiry', desc: 'Generate courtesy reminder 5 days prior to membership expiry' },
+                    { key: 'threeDay', label: '3 Days Before Expiry', desc: 'Generate renewal prompt with current fee details' },
+                    { key: 'oneDay', label: '1 Day Before Expiry', desc: 'Urgent final courtesy alert 24 hours before pass expiration' },
+                    { key: 'expiryDay', label: 'On Expiry Date', desc: 'Send expiration notice and renewal link on date of expiry' },
+                    { key: 'paymentAlerts', label: 'Outstanding Balance Due Alert', desc: 'Alert members with positive unpaid balances on their membership dues' },
                   ].map(item => (
                     <div key={item.key} className="flex items-center justify-between p-3 rounded-lg border border-[#E1E6E9] bg-white">
                       <div>
                         <p className="text-sm font-semibold text-[#25313B]">{item.label}</p>
                         <p className="text-xs text-[#64717B]">{item.desc}</p>
                       </div>
-                      <label className="relative inline-flex items-center cursor-pointer">
+                      <label className={`relative inline-flex items-center ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
                         <input
                           type="checkbox"
-                          checked={reminders[item.key]}
-                          onChange={(e) => setReminders({ ...reminders, [item.key]: e.target.checked })}
+                          checked={Boolean(reminders[item.key])}
+                          onChange={(e) => handleReminderToggle(item.key, e.target.checked)}
+                          disabled={!isAdmin || savingReminders}
                           className="sr-only peer"
                         />
                         <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#16845B]" />
@@ -617,14 +860,19 @@ export default function Settings() {
 
                   <div className="flex items-center justify-between p-3 rounded-lg border border-[#E1E6E9] bg-white">
                     <div>
-                      <p className="text-sm font-semibold text-[#25313B]">Auto-Send via WhatsApp Business</p>
-                      <p className="text-xs text-[#64717B]">Deliver verified messages to members with high open rate</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-[#25313B]">Auto-Send via WhatsApp Business</p>
+                        <Badge variant="default" className="text-[10px] py-0 px-1.5 font-normal">Integration Required</Badge>
+                      </div>
+                      <p className="text-xs text-[#64717B]">Channel readiness preference (requires external API gateway integration)</p>
+                      <p className="text-[11px] text-[#85949F] mt-0.5 italic">Note: WhatsApp messaging currently operates via staff-initiated click-to-chat links.</p>
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
+                    <label className={`relative inline-flex items-center ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
                       <input
                         type="checkbox"
-                        checked={reminders.autoWhatsApp}
-                        onChange={(e) => setReminders({ ...reminders, autoWhatsApp: e.target.checked })}
+                        checked={Boolean(reminders.autoWhatsApp)}
+                        onChange={(e) => handleReminderToggle('autoWhatsApp', e.target.checked)}
+                        disabled={!isAdmin || savingReminders}
                         className="sr-only peer"
                       />
                       <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#16845B]" />
@@ -633,14 +881,19 @@ export default function Settings() {
 
                   <div className="flex items-center justify-between p-3 rounded-lg border border-[#E1E6E9] bg-white">
                     <div>
-                      <p className="text-sm font-semibold text-[#25313B]">Transactional SMS Fallback</p>
-                      <p className="text-xs text-[#64717B]">Dispatch SMS if WhatsApp message is unacknowledged after 6 hours</p>
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-semibold text-[#25313B]">Transactional SMS Fallback</p>
+                        <Badge variant="default" className="text-[10px] py-0 px-1.5 font-normal">Integration Required</Badge>
+                      </div>
+                      <p className="text-xs text-[#64717B]">Channel readiness preference (requires external API gateway integration)</p>
+                      <p className="text-[11px] text-[#85949F] mt-0.5 italic">Note: Direct SMS dispatch requires future SMS gateway provider integration.</p>
                     </div>
-                    <label className="relative inline-flex items-center cursor-pointer">
+                    <label className={`relative inline-flex items-center ${isAdmin ? 'cursor-pointer' : 'cursor-not-allowed opacity-60'}`}>
                       <input
                         type="checkbox"
-                        checked={reminders.smsFallback}
-                        onChange={(e) => setReminders({ ...reminders, smsFallback: e.target.checked })}
+                        checked={Boolean(reminders.smsFallback)}
+                        onChange={(e) => handleReminderToggle('smsFallback', e.target.checked)}
+                        disabled={!isAdmin || savingReminders}
                         className="sr-only peer"
                       />
                       <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[#16845B]" />
@@ -807,6 +1060,73 @@ export default function Settings() {
               {planToToggle.targetActive
                 ? "Once reactivated, this plan will immediately be selectable for new member registration and renewal subscriptions."
                 : "Inactive plans are hidden from member onboarding and renewal dropdowns. Existing member subscriptions will not be modified or deleted."}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* PT Package Modal (Phase 3: Create & Edit) */}
+      <PtPackageEditorModal
+        isOpen={ptPackageModalOpen}
+        onClose={() => {
+          setPtPackageModalOpen(false);
+          setEditingPtPackage(null);
+        }}
+        pkg={editingPtPackage}
+        onSave={handleSavePtPackage}
+      />
+
+      {/* Confirmation Modal for PT Package Deactivation / Reactivation */}
+      {ptPackageToToggle && (
+        <Modal
+          isOpen={Boolean(ptPackageToToggle)}
+          onClose={() => setPtPackageToToggle(null)}
+          title={ptPackageToToggle.targetActive ? "Activate PT Package" : "Deactivate PT Package"}
+          size="sm"
+          footer={
+            <div className="flex items-center justify-end gap-2.5 w-full">
+              <Button
+                variant="secondary"
+                onClick={() => setPtPackageToToggle(null)}
+                disabled={Boolean(togglingPtPackageId)}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant={ptPackageToToggle.targetActive ? "primary" : "danger"}
+                onClick={handleConfirmTogglePtPackageStatus}
+                disabled={Boolean(togglingPtPackageId)}
+                icon={togglingPtPackageId ? Loader2 : ptPackageToToggle.targetActive ? Check : Power}
+              >
+                {togglingPtPackageId
+                  ? "Updating..."
+                  : ptPackageToToggle.targetActive
+                  ? "Confirm Activation"
+                  : "Confirm Deactivation"}
+              </Button>
+            </div>
+          }
+        >
+          <div className="space-y-3 text-xs text-[#25313B]">
+            <p>
+              {ptPackageToToggle.targetActive ? (
+                <>
+                  Are you sure you want to reactivate the <strong>{ptPackageToToggle.pkg.name}</strong> package?
+                </>
+              ) : (
+                <>
+                  Are you sure you want to deactivate the <strong>{ptPackageToToggle.pkg.name}</strong> package?
+                </>
+              )}
+            </p>
+            <div className={`p-3 rounded-xl border text-xs leading-relaxed ${
+              ptPackageToToggle.targetActive
+                ? "bg-[#E8F5EE] border-[#16845B]/20 text-[#16845B]"
+                : "bg-[#FFF9F5] border-[#FEE4D2] text-[#B93815]"
+            }`}>
+              {ptPackageToToggle.targetActive
+                ? "Once reactivated, this package will immediately be available for personal training client assignments."
+                : "Inactive packages are hidden from member onboarding and trainer assignment dropdowns. Existing member assignments will not be modified or deleted."}
             </div>
           </div>
         </Modal>

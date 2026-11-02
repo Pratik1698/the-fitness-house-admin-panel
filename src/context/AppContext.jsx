@@ -60,6 +60,17 @@ import {
   updateGymInfo as updateGymInfoService,
 } from '../services/gymInfoService';
 import {
+  getPtPackages as getPtPackagesService,
+  createPtPackage as createPtPackageService,
+  updatePtPackage as updatePtPackageService,
+  togglePtPackageStatus as togglePtPackageStatusService,
+} from '../services/ptPackageService';
+import {
+  fetchReminderSettings as fetchReminderSettingsService,
+  updateReminderSettings as updateReminderSettingsService,
+  DEFAULT_REMINDER_SETTINGS,
+} from '../services/reminderSettingsService';
+import {
   MEMBERS,
   PAYMENTS,
   CHECKINS,
@@ -156,6 +167,64 @@ export function AppProvider({ children }) {
       setAllMembershipPlans([]);
     } finally {
       setPlansLoading(false);
+    }
+  }, []);
+
+  // Supabase Database PT Packages State (Phase 3)
+  const [ptPackages, setPtPackages] = useState([]);
+  const [allPtPackages, setAllPtPackages] = useState([]);
+  const [ptPackagesLoading, setPtPackagesLoading] = useState(false);
+  const [ptPackagesError, setPtPackagesError] = useState(null);
+
+  const fetchPtPackages = useCallback(async () => {
+    setPtPackagesLoading(true);
+    setPtPackagesError(null);
+    try {
+      const [allRes, activeRes] = await Promise.all([
+        getPtPackagesService({ includeInactive: true }),
+        getPtPackagesService({ includeInactive: false }),
+      ]);
+
+      if (allRes.error && activeRes.error) {
+        setPtPackagesError(allRes.error.message || activeRes.error.message || 'Failed to load PT packages.');
+        setPtPackages([]);
+        setAllPtPackages([]);
+      } else {
+        const allData = allRes.data || [];
+        const activeData = activeRes.data || allData.filter(p => p.isActive || p.is_active);
+        setAllPtPackages(allData);
+        setPtPackages(activeData);
+        setPtPackagesError(null);
+      }
+    } catch (err) {
+      setPtPackagesError(err instanceof Error ? err.message : 'Unexpected error loading PT packages.');
+      setPtPackages([]);
+      setAllPtPackages([]);
+    } finally {
+      setPtPackagesLoading(false);
+    }
+  }, []);
+
+  // Supabase Reminder Automation Settings State (Phase 4)
+  const [reminderSettings, setReminderSettings] = useState(DEFAULT_REMINDER_SETTINGS);
+  const [reminderSettingsLoading, setReminderSettingsLoading] = useState(false);
+  const [reminderSettingsError, setReminderSettingsError] = useState(null);
+
+  const fetchReminderSettingsData = useCallback(async () => {
+    setReminderSettingsLoading(true);
+    setReminderSettingsError(null);
+    try {
+      const res = await fetchReminderSettingsService();
+      if (res.error) {
+        setReminderSettingsError(res.error.message || 'Failed to load reminder settings.');
+      } else if (res.data) {
+        setReminderSettings(res.data);
+        setReminderSettingsError(null);
+      }
+    } catch (err) {
+      setReminderSettingsError(err instanceof Error ? err.message : 'Unexpected error loading reminder settings.');
+    } finally {
+      setReminderSettingsLoading(false);
     }
   }, []);
 
@@ -587,12 +656,15 @@ export function AppProvider({ children }) {
       setRole(null);
       setAuthError(null);
       setGymInfoMigrationPending(false);
+      setPtPackages([]);
+      setAllPtPackages([]);
+      setReminderSettings(DEFAULT_REMINDER_SETTINGS);
       setAuthLoading(false);
     }
   }, []);
 
   // Fetch active membership plans, members, payments, PT data, attendance, notifications, followups,
-  // and gym profile whenever session is authenticated and authorized
+  // PT packages, reminder settings, and gym profile whenever session is authenticated and authorized
   useEffect(() => {
     if (session?.user && session.user.email_confirmed_at && isValidRole(role)) {
       fetchGymInfo();
@@ -600,6 +672,8 @@ export function AppProvider({ children }) {
       fetchMembers();
       fetchPayments();
       fetchPtData();
+      fetchPtPackages();
+      fetchReminderSettingsData();
       fetchCheckins();
       fetchNotifications();
       fetchFollowups();
@@ -613,6 +687,13 @@ export function AppProvider({ children }) {
       setAllMembershipPlans([]);
       setPlansLoading(false);
       setPlansError(null);
+      setPtPackages([]);
+      setAllPtPackages([]);
+      setPtPackagesLoading(false);
+      setPtPackagesError(null);
+      setReminderSettings(DEFAULT_REMINDER_SETTINGS);
+      setReminderSettingsLoading(false);
+      setReminderSettingsError(null);
       setMembers(loadFromStorage(STORAGE_KEYS.MEMBERS, MEMBERS));
       setMembersLoading(false);
       setMembersError(null);
@@ -638,7 +719,7 @@ export function AppProvider({ children }) {
       setNotificationsLoading(false);
       setNotificationsError(null);
     }
-  }, [session, role, fetchGymInfo, fetchPlans, fetchMembers, fetchPayments, fetchPtData, fetchCheckins, fetchNotifications, fetchFollowups]);
+  }, [session, role, fetchGymInfo, fetchPlans, fetchMembers, fetchPayments, fetchPtData, fetchPtPackages, fetchReminderSettingsData, fetchCheckins, fetchNotifications, fetchFollowups]);
 
   // Sync state changes to LocalStorage (only when unauthenticated to preserve prototype records)
   useEffect(() => {
@@ -1589,6 +1670,59 @@ export function AppProvider({ children }) {
   }, [fetchPlans]);
 
   /**
+   * Personal Training Packages mutation operations (Phase 3)
+   */
+  const createPtPackageAction = useCallback(async (pkgData) => {
+    const res = await createPtPackageService(pkgData);
+    if (!res.error) {
+      await fetchPtPackages();
+    }
+    return res;
+  }, [fetchPtPackages]);
+
+  const updatePtPackageAction = useCallback(async (id, updates) => {
+    const res = await updatePtPackageService(id, updates);
+    if (!res.error) {
+      await fetchPtPackages();
+    }
+    return res;
+  }, [fetchPtPackages]);
+
+  const togglePtPackageStatusAction = useCallback(async (id, currentIsActive) => {
+    const res = await togglePtPackageStatusService(id, currentIsActive);
+    if (!res.error) {
+      await fetchPtPackages();
+    }
+    return res;
+  }, [fetchPtPackages]);
+
+  /**
+   * Reminder Automation Settings mutation operations (Phase 4)
+   */
+  const updateReminderSettingsAction = useCallback(async (newSettings) => {
+    setReminderSettingsLoading(true);
+    setReminderSettingsError(null);
+    try {
+      const res = await updateReminderSettingsService(newSettings);
+      if (res.error) {
+        setReminderSettingsError(res.error.message || 'Failed to update reminder settings.');
+        return res;
+      }
+      if (res.data) {
+        setReminderSettings(res.data);
+        return { data: res.data, error: null };
+      }
+      return res;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Failed to update reminder settings.';
+      setReminderSettingsError(msg);
+      return { data: null, error: new Error(msg) };
+    } finally {
+      setReminderSettingsLoading(false);
+    }
+  }, []);
+
+  /**
    * Resets local storage and state to original seed data
    */
   const resetToDemoData = useCallback(() => {
@@ -1660,6 +1794,16 @@ export function AppProvider({ children }) {
     ptError,
     reloadPtData: fetchPtData,
 
+    // PT Packages Catalog State (Phase 3: Supabase public.pt_packages)
+    ptPackages, // Active packages only (for personal training assignments & pricing)
+    allPtPackages, // All packages including inactive (for Settings management)
+    ptPackagesLoading,
+    ptPackagesError,
+    reloadPtPackages: fetchPtPackages,
+    createPtPackage: createPtPackageAction,
+    updatePtPackage: updatePtPackageAction,
+    togglePtPackageStatus: togglePtPackageStatusAction,
+
     // Attendance Supabase State (from Supabase public.checkins & public.v_attendance_logs)
     checkins,
     checkinsLoading,
@@ -1679,6 +1823,13 @@ export function AppProvider({ children }) {
     markNotificationRead: markNotificationAsRead,
     markAllNotificationsRead: markAllNotificationsAsRead,
     markNotificationWhatsAppSent: markNotificationAsWhatsAppSent,
+
+    // Reminder Automation State (Phase 4: Supabase public.reminder_settings)
+    reminderSettings,
+    reminderSettingsLoading,
+    reminderSettingsError,
+    reloadReminderSettings: fetchReminderSettingsData,
+    updateReminderSettings: updateReminderSettingsAction,
 
     // Member Follow-ups Supabase State (from Supabase public.member_followups & public.v_member_followups)
     followupsLoading,

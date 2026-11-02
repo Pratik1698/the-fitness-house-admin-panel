@@ -192,3 +192,13 @@ export async function getPtSessions() {
     };
   }
 }
+
+// Re-export PT package management methods for unified PT service interface
+export {
+  getPtPackages,
+  createPtPackage,
+  updatePtPackage,
+  togglePtPackageStatus,
+  normalizePtPackage,
+  validatePtPackageInput,
+} from './ptPackageService';

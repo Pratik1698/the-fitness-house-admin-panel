@@ -10,7 +10,6 @@ import { SearchInput, Select, Input, Textarea } from '../components/ui/Input';
 import { Tabs } from '../components/ui/Tabs';
 import { Modal } from '../components/ui/Modal';
 import { EmptyState } from '../components/ui/EmptyState';
-import { PT_PACKAGES } from '../data/sampleData';
 import {
   formatINR,
   getLocalDateString,
@@ -21,7 +20,7 @@ import {
   Users, Calendar, CheckCircle, IndianRupee, AlertTriangle,
   Dumbbell, Eye, Target, TrendingUp, Clock, Plus,
   Edit2, Check, X, RotateCcw, FileText, CheckCircle2,
-  XCircle, AlertCircle, Sparkles, Filter
+  XCircle, AlertCircle, Sparkles, Filter, Loader2, RefreshCw,
 } from 'lucide-react';
 
 export default function PersonalTraining() {
@@ -32,6 +31,10 @@ export default function PersonalTraining() {
     payments,
     ptClients,
     ptSessions,
+    ptPackages,
+    ptPackagesLoading,
+    ptPackagesError,
+    reloadPtPackages,
     addPtClient,
     updatePtClient,
     addPtSession,
@@ -659,38 +662,71 @@ export default function PersonalTraining() {
             <p className="text-xs text-[#64717B]">
               Standard personal training packages offered at The Fitness House. Select a package to quickly assign it to a gym member.
             </p>
-            <Badge variant="accent">3 Active Packages</Badge>
+            <Badge variant="accent">
+              {ptPackages.length} Active {ptPackages.length === 1 ? 'Package' : 'Packages'}
+            </Badge>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-            {PT_PACKAGES.map(pkg => (
-              <Card key={pkg.id} className="text-center hover:border-[#16845B]/40 transition-all flex flex-col justify-between p-6">
-                <div>
-                  <div className="p-3 w-14 h-14 mx-auto rounded-2xl bg-[#E8F5EE] text-[#16845B] flex items-center justify-center mb-4">
-                    <Dumbbell size={28} />
-                  </div>
-                  <h3 className="text-xl font-bold text-[#25313B]">{pkg.name}</h3>
-                  <p className="text-3xl font-extrabold text-[#16845B] mt-2">{formatINR(pkg.price)}</p>
-                  <div className="mt-4 py-3 border-y border-[#E1E6E9] space-y-1.5 text-xs text-[#64717B]">
-                    <p className="font-semibold text-[#25313B]">{pkg.sessions} Personal Training Sessions</p>
-                    <p>{pkg.validity} Days Package Validity</p>
-                    <p>Dedicated 1-on-1 Coach Pravin Joshi Guidance</p>
-                  </div>
-                </div>
+          {ptPackagesLoading ? (
+            <div className="py-16 flex flex-col items-center justify-center text-xs text-[#64717B]">
+              <Loader2 size={24} className="animate-spin text-[#16845B] mb-2" />
+              <span>Loading personal training packages from database...</span>
+            </div>
+          ) : ptPackagesError ? (
+            <div className="p-6 text-center text-xs text-[#B42318] bg-[#FEF3F2] rounded-xl border border-[#FECDCA]">
+              <p className="font-semibold mb-2">Failed to load PT packages: {ptPackagesError}</p>
+              <Button variant="secondary" size="sm" onClick={reloadPtPackages} icon={RefreshCw}>
+                Retry Loading
+              </Button>
+            </div>
+          ) : ptPackages.length === 0 ? (
+            <div className="py-12">
+              <EmptyState
+                icon={Dumbbell}
+                title="No Active PT Packages"
+                description="No personal training packages are currently active in the database. Please configure packages in Facility Settings."
+              />
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+              {ptPackages.map(pkg => {
+                const sessions = pkg.totalSessions || pkg.total_sessions || pkg.sessions || 0;
+                const validity = pkg.validityDays || pkg.validity_days || pkg.validity || 30;
 
-                <div className="mt-6 pt-2">
-                  <Button
-                    variant="primary"
-                    className="w-full"
-                    icon={Plus}
-                    onClick={() => handleQuickAssignPackage(pkg)}
-                  >
-                    Assign This Package
-                  </Button>
-                </div>
-              </Card>
-            ))}
-          </div>
+                return (
+                  <Card key={pkg.id} className="text-center hover:border-[#16845B]/40 transition-all flex flex-col justify-between p-6">
+                    <div>
+                      <div className="p-3 w-14 h-14 mx-auto rounded-2xl bg-[#E8F5EE] text-[#16845B] flex items-center justify-center mb-4">
+                        <Dumbbell size={28} />
+                      </div>
+                      <h3 className="text-xl font-bold text-[#25313B]">{pkg.name}</h3>
+                      <p className="text-3xl font-extrabold text-[#16845B] mt-2">{formatINR(pkg.price)}</p>
+                      <div className="mt-4 py-3 border-y border-[#E1E6E9] space-y-1.5 text-xs text-[#64717B]">
+                        <p className="font-semibold text-[#25313B]">{sessions} Personal Training Sessions</p>
+                        <p>{validity} Days Package Validity</p>
+                        {pkg.description ? (
+                          <p className="italic text-[#85949F]">{pkg.description}</p>
+                        ) : (
+                          <p>Dedicated 1-on-1 Coach Pravin Joshi Guidance</p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="mt-6 pt-2">
+                      <Button
+                        variant="primary"
+                        className="w-full"
+                        icon={Plus}
+                        onClick={() => handleQuickAssignPackage(pkg)}
+                      >
+                        Assign This Package
+                      </Button>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
+          )}
         </div>
       ),
     },
@@ -846,6 +882,7 @@ export default function PersonalTraining() {
             setPreselectedPackage(null);
           }}
           members={members}
+          packages={ptPackages}
           preselectedPackage={preselectedPackage}
           onSave={(clientData, paymentData) => {
             addPtClient(clientData, paymentData);
@@ -910,57 +947,81 @@ export default function PersonalTraining() {
 // ============================================================================
 // Modal 1: Assign PT Package Modal
 // ============================================================================
-function AssignPtModal({ isOpen, onClose, members, preselectedPackage, onSave }) {
+function AssignPtModal({ isOpen, onClose, members, packages = [], preselectedPackage, onSave }) {
   const today = getLocalDateString();
-  const defaultPkg = preselectedPackage || PT_PACKAGES[0];
+  const defaultPkg = preselectedPackage || (packages.length > 0 ? packages[0] : null);
 
   const [form, setForm] = useState({
     memberId: '',
-    packageId: defaultPkg.id,
-    package: defaultPkg.name,
-    totalSessions: defaultPkg.sessions,
+    packageId: defaultPkg?.id || '',
+    package: defaultPkg?.name || '',
+    totalSessions: defaultPkg ? (defaultPkg.totalSessions || defaultPkg.sessions || 8) : 8,
     trainer: 'Coach Pravin Joshi',
     startDate: today,
-    validTill: calculateExpiryDate(today, defaultPkg.validity),
+    validTill: defaultPkg ? calculateExpiryDate(today, defaultPkg.validityDays || defaultPkg.validity || 30) : calculateExpiryDate(today, 30),
     recordPayment: true,
-    paymentAmount: String(defaultPkg.price),
+    paymentAmount: defaultPkg ? String(defaultPkg.price) : '0',
     paymentMethod: 'Cash',
     notes: '',
   });
 
   const [errors, setErrors] = useState({});
 
-  // When preselected package changes
+  // When preselected package or packages list changes
   useEffect(() => {
     if (preselectedPackage) {
+      const validity = preselectedPackage.validityDays || preselectedPackage.validity || 30;
+      const sessions = preselectedPackage.totalSessions || preselectedPackage.sessions || 8;
       setForm(prev => ({
         ...prev,
         packageId: preselectedPackage.id,
         package: preselectedPackage.name,
-        totalSessions: preselectedPackage.sessions,
-        validTill: calculateExpiryDate(prev.startDate || today, preselectedPackage.validity),
+        totalSessions: sessions,
+        validTill: calculateExpiryDate(prev.startDate || today, validity),
         paymentAmount: String(preselectedPackage.price),
       }));
+    } else if (packages.length > 0 && !form.packageId) {
+      const first = packages[0];
+      const validity = first.validityDays || first.validity || 30;
+      const sessions = first.totalSessions || first.sessions || 8;
+      setForm(prev => ({
+        ...prev,
+        packageId: first.id,
+        package: first.name,
+        totalSessions: sessions,
+        validTill: calculateExpiryDate(prev.startDate || today, validity),
+        paymentAmount: String(first.price),
+      }));
     }
-  }, [preselectedPackage]);
+  }, [preselectedPackage, packages]);
 
   const handlePackageChange = (pkgId) => {
-    const pkg = PT_PACKAGES.find(p => p.id === pkgId);
+    const pkg = packages.find(p => p.id === pkgId);
     if (pkg) {
+      const validity = pkg.validityDays || pkg.validity || 30;
+      const sessions = pkg.totalSessions || pkg.sessions || 8;
       setForm(prev => ({
         ...prev,
         packageId: pkg.id,
         package: pkg.name,
-        totalSessions: pkg.sessions,
-        validTill: calculateExpiryDate(prev.startDate || today, pkg.validity),
+        totalSessions: sessions,
+        validTill: calculateExpiryDate(prev.startDate || today, validity),
         paymentAmount: String(pkg.price),
+      }));
+      setErrors(prev => ({ ...prev, packageId: undefined }));
+    } else {
+      setForm(prev => ({
+        ...prev,
+        packageId: '',
+        package: '',
+        paymentAmount: '0',
       }));
     }
   };
 
   const handleStartDateChange = (newStartDate) => {
-    const pkg = PT_PACKAGES.find(p => p.id === form.packageId);
-    const validity = pkg ? pkg.validity : 30;
+    const pkg = packages.find(p => p.id === form.packageId);
+    const validity = pkg ? (pkg.validityDays || pkg.validity || 30) : 30;
     setForm(prev => ({
       ...prev,
       startDate: newStartDate,
@@ -971,6 +1032,7 @@ function AssignPtModal({ isOpen, onClose, members, preselectedPackage, onSave })
   const validate = () => {
     const errs = {};
     if (!form.memberId) errs.memberId = 'Please select a gym member';
+    if (!form.packageId) errs.packageId = 'Please select a PT package';
     if (!form.trainer.trim()) errs.trainer = 'Trainer name is required';
     if (!form.startDate) errs.startDate = 'Start date is required';
     if (!form.validTill) errs.validTill = 'Validity date is required';
@@ -1031,13 +1093,21 @@ function AssignPtModal({ isOpen, onClose, members, preselectedPackage, onSave })
           <Button variant="secondary" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit}>
+          <Button onClick={handleSubmit} disabled={packages.length === 0}>
             Confirm Assignment
           </Button>
         </>
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Empty Packages Notice */}
+        {packages.length === 0 && (
+          <div className="p-3 rounded-xl bg-[#FEF3F2] border border-[#FECDCA] text-xs text-[#B42318] flex items-center gap-2">
+            <AlertCircle size={16} className="shrink-0" />
+            <span>No active PT packages available. Configure packages in Facility Settings before assigning.</span>
+          </div>
+        )}
+
         {/* Member Selection */}
         <Select
           label="Select Member *"
@@ -1062,10 +1132,15 @@ function AssignPtModal({ isOpen, onClose, members, preselectedPackage, onSave })
             label="PT Package *"
             value={form.packageId}
             onChange={e => handlePackageChange(e.target.value)}
-            options={PT_PACKAGES.map(pkg => ({
-              value: pkg.id,
-              label: `${pkg.name} — ${formatINR(pkg.price)}`,
-            }))}
+            error={errors.packageId}
+            disabled={packages.length === 0}
+            options={[
+              { value: '', label: packages.length === 0 ? 'No packages available' : 'Choose PT package...' },
+              ...packages.map(pkg => ({
+                value: pkg.id,
+                label: `${pkg.name} — ${formatINR(pkg.price)}`,
+              }))
+            ]}
           />
           <Input
             label="Assigned Trainer *"
