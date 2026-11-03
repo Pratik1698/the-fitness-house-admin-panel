@@ -27,6 +27,7 @@ export default function PersonalTraining() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const {
+    isAdmin,
     members,
     payments,
     ptClients,
@@ -776,10 +777,12 @@ export default function PersonalTraining() {
                       : '0%'}
                   </span>
                 </div>
-                <div className="flex justify-between items-center text-xs">
-                  <span className="text-[#64717B]">Total PT Revenue Collected:</span>
-                  <span className="font-bold text-[#16845B]">{formatINR(ptRevenue)}</span>
-                </div>
+                {isAdmin && (
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="text-[#64717B]">Total PT Revenue Collected:</span>
+                    <span className="font-bold text-[#16845B]">{formatINR(ptRevenue)}</span>
+                  </div>
+                )}
                 <div className="flex justify-between items-center text-xs">
                   <span className="text-[#64717B]">Active PT Client Roster:</span>
                   <span className="font-bold text-[#25313B]">{activeClients.length} members</span>
@@ -830,7 +833,7 @@ export default function PersonalTraining() {
       )}
 
       {/* KPI Cards Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className={`grid grid-cols-1 sm:grid-cols-2 ${isAdmin ? 'lg:grid-cols-5' : 'lg:grid-cols-4'} gap-4`}>
         <KPICard
           icon={Users}
           label="Active PT Clients"
@@ -852,13 +855,15 @@ export default function PersonalTraining() {
           subtitle="Total delivered"
           variant="default"
         />
-        <KPICard
-          icon={IndianRupee}
-          label="PT Revenue"
-          value={formatINR(ptRevenue)}
-          subtitle="From PT payments"
-          variant="accent"
-        />
+        {isAdmin && (
+          <KPICard
+            icon={IndianRupee}
+            label="PT Revenue"
+            value={formatINR(ptRevenue)}
+            subtitle="From PT payments"
+            variant="accent"
+          />
+        )}
         <KPICard
           icon={AlertTriangle}
           label="Ending Soon"

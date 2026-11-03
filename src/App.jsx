@@ -164,7 +164,7 @@ function AccessDeniedScreen() {
  * Route guard enforcing authenticated sessions with verified email and optional role requirements
  */
 function ProtectedRoute({ children, requiredRole }) {
-  const { isAuthenticated, isEmailUnverified, authLoading, role } = useAuth();
+  const { isAuthenticated, isEmailUnverified, authLoading, role, pendingInvitation } = useAuth();
   const location = useLocation();
 
   if (authLoading) {
@@ -174,6 +174,11 @@ function ProtectedRoute({ children, requiredRole }) {
   // If user signed in but email is unverified, require email confirmation
   if (isEmailUnverified) {
     return <EmailVerificationNotice />;
+  }
+
+  // If authenticated user has a pending staff invitation, redirect to invitation password setup
+  if (pendingInvitation) {
+    return <Navigate to="/reset-password?mode=invite" replace />;
   }
 
   if (!isAuthenticated) {

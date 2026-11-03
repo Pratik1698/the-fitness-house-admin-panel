@@ -10,7 +10,17 @@ import { useAuth } from '../context/AppContext';
 export default function Login() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { login, isAuthenticated, authLoading, requestPasswordReset, resendVerificationEmail } = useAuth();
+  const {
+    login,
+    isAuthenticated,
+    authLoading,
+    pendingInvitation,
+    acceptStaffInvitation,
+    logout,
+    user,
+    requestPasswordReset,
+    resendVerificationEmail,
+  } = useAuth();
 
   // Mode: 'login' | 'forgot_password'
   const [mode, setMode] = useState('login');
@@ -33,6 +43,7 @@ export default function Login() {
 
   // Common UI states
   const [loading, setLoading] = useState(false);
+  const [acceptingInvitation, setAcceptingInvitation] = useState(false);
   const [error, setError] = useState(null);
 
   // If already logged in with a valid session and role, redirect to target page or dashboard
@@ -42,6 +53,13 @@ export default function Login() {
       navigate(from, { replace: true });
     }
   }, [isAuthenticated, authLoading, navigate, location]);
+
+  // If user has a pending staff invitation, redirect to reset-password in invitation setup mode
+  useEffect(() => {
+    if (!authLoading && pendingInvitation) {
+      navigate('/reset-password?mode=invite', { replace: true });
+    }
+  }, [pendingInvitation, authLoading, navigate]);
 
   // Handle Resend Cooldown Timer
   useEffect(() => {
@@ -89,6 +107,10 @@ export default function Login() {
           setUnverifiedEmail(null);
         }
       } else {
+        if (result.pendingInvitation) {
+          navigate('/reset-password?mode=invite', { replace: true });
+          return;
+        }
         const from = location.state?.from?.pathname || '/';
         navigate(from, { replace: true });
       }
@@ -96,6 +118,23 @@ export default function Login() {
       setError(err instanceof Error ? err.message : 'Unable to sign in right now. Please check your connection and try again.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleAcceptInvitation = async () => {
+    setError(null);
+    setAcceptingInvitation(true);
+    try {
+      const result = await acceptStaffInvitation();
+      if (result.error) {
+        setError(result.error.message || 'The invitation could not be accepted. Contact the gym administrator.');
+        return;
+      }
+      navigate(location.state?.from?.pathname || '/', { replace: true });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The invitation could not be accepted.');
+    } finally {
+      setAcceptingInvitation(false);
     }
   };
 
@@ -171,7 +210,46 @@ export default function Login() {
 
         {/* Auth Card */}
         <div className="bg-white rounded-2xl border border-[#E1E6E9] shadow-sm p-6 sm:p-8">
-          {mode === 'login' ? (
+          {pendingInvitation ? (
+            <div className="space-y-5">
+              <div>
+                <h2 className="text-lg font-bold text-[#25313B] tracking-tight">Staff Account Activation</h2>
+                <p className="text-xs text-[#64717B] mt-1">
+                  You are signed in as <span className="font-semibold text-[#25313B]">{user?.email}</span>. Please configure your password to activate your staff access.
+                </p>
+              </div>
+
+              {error && (
+                <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 flex items-start gap-2">
+                  <AlertCircle size={16} className="shrink-0 mt-0.5" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <Button
+                type="button"
+                variant="primary"
+                size="lg"
+                disabled={authLoading}
+                className="w-full"
+                onClick={() => navigate('/reset-password?mode=invite', { replace: true })}
+              >
+                Set Password & Activate Account
+                <ArrowRight size={16} />
+              </Button>
+
+              <Button
+                type="button"
+                variant="secondary"
+                size="md"
+                disabled={authLoading}
+                className="w-full"
+                onClick={logout}
+              >
+                <ArrowLeft size={14} /> Sign Out
+              </Button>
+            </div>
+          ) : mode === 'login' ? (
             <>
               <div className="mb-6">
                 <h2 className="text-lg font-bold text-[#25313B] tracking-tight">

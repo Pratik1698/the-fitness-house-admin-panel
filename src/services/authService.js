@@ -181,10 +181,25 @@ export async function signInWithPassword(email, password) {
       };
     }
 
-    // Resolve user role from Phase 7C stored procedure / profile
+    // Resolve an already active role first. Invitation acceptance is a separate,
+    // explicit user action and must never happen during role lookup.
     const role = await getUserRole(data.user.id);
 
-    // Fail-closed enforcement: only 'admin' and 'staff' are accepted
+    if (!isValidRole(role)) {
+      const pendingInvitation = await canAcceptStaffInvitation();
+      if (pendingInvitation) {
+        return {
+          user: data.user,
+          session: data.session,
+          role: null,
+          pendingInvitation: true,
+          error: null,
+        };
+      }
+    }
+
+    // Fail-closed enforcement: only active roles or a verified pending invite
+    // may keep an authenticated session in the public invitation screen.
     if (!isValidRole(role)) {
       try {
         await supabase.auth.signOut();
@@ -339,21 +354,26 @@ export async function getUserRole(userId) {
       }
     }
 
-    // 3. Acceptance lifecycle check: If user profile is not active, check if they hold
-    // a valid pending invitation and atomically complete the server-side acceptance workflow
-    try {
-      const { data: acceptData, error: acceptError } = await activeClient.rpc('accept_staff_invitation');
-      if (!acceptError && acceptData?.success) {
-        return 'staff';
-      }
-    } catch {
-      // Not a pending invitee, or invite is expired/revoked/invalid
-    }
-
     return null;
   } catch (err) {
     console.warn('[authService] Failed to resolve user role:', err);
     return null;
+  }
+}
+
+/**
+ * Read-only check used to show the explicit invitation acceptance screen.
+ * The database binds this result to the authenticated user's own invitation.
+ */
+export async function canAcceptStaffInvitation() {
+  const isConfigured = typeof activeConfigured === 'function' ? await activeConfigured() : activeConfigured;
+  if (!isConfigured || !activeClient) return false;
+
+  try {
+    const { data, error } = await activeClient.rpc('can_accept_staff_invitation');
+    return !error && data === true;
+  } catch {
+    return false;
   }
 }
 
@@ -477,7 +497,8 @@ export async function requestPasswordReset(email) {
  * @returns {Promise<{ success: boolean, message?: string, error: Error|null }>}
  */
 export async function resetPassword(newPassword, confirmPassword) {
-  if (!isSupabaseConfigured) {
+  const isConfigured = typeof activeConfigured === 'function' ? await activeConfigured() : activeConfigured;
+  if (!isConfigured) {
     return { success: false, error: new Error('Supabase is not configured.') };
   }
 
@@ -495,7 +516,8 @@ export async function resetPassword(newPassword, confirmPassword) {
   }
 
   try {
-    const { data, error } = await supabase.auth.updateUser({
+    const client = activeClient || supabase;
+    const { data, error } = await client.auth.updateUser({
       password: newPassword,
     });
 
@@ -593,6 +615,7 @@ export default {
   getSession,
   getCurrentUser,
   getUserRole,
+  canAcceptStaffInvitation,
   onAuthStateChange,
   isValidRole,
   VALID_ROLES,

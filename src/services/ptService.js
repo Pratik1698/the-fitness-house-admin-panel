@@ -13,7 +13,7 @@ import { supabase, isSupabaseConfigured } from './supabaseClient';
  *
  * @returns {Promise<{ data: Array<object>|null, error: Error|null }>}
  */
-export async function getPtAssignments() {
+export async function getPtAssignments({ includeFinancials = false } = {}) {
   if (!isSupabaseConfigured) {
     return {
       data: null,
@@ -22,8 +22,10 @@ export async function getPtAssignments() {
   }
 
   try {
+    const relation = includeFinancials ? 'v_admin_pt_assignments' : 'pt_assignments';
+    const financialColumns = includeFinancials ? 'fee_amount, amount_paid, balance,' : '';
     const { data, error } = await supabase
-      .from('pt_assignments')
+      .from(relation)
       .select(`
         id,
         member_id,
@@ -31,9 +33,7 @@ export async function getPtAssignments() {
         trainer_id,
         total_sessions,
         completed_sessions,
-        fee_amount,
-        amount_paid,
-        balance,
+        ${financialColumns}
         status,
         start_date,
         notes,
@@ -59,7 +59,7 @@ export async function getPtAssignments() {
       .order('created_at', { ascending: false });
 
     if (error) {
-      console.error('[ptService.getPtAssignments] Database error:', error);
+      console.error(`[ptService.getPtAssignments:${relation}] Database error:`, error);
       return {
         data: null,
         error: new Error(error.message || 'Failed to fetch PT assignments from database.'),

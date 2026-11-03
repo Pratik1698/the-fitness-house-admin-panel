@@ -32,7 +32,7 @@ serve(async (req: Request) => {
     const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
     const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 
-    if (!supabaseUrl || !supabaseServiceRoleKey) {
+    if (!supabaseUrl || !supabaseAnonKey || !supabaseServiceRoleKey) {
       return new Response(
         JSON.stringify({ error: "Server configuration missing required environment variables." }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -60,8 +60,16 @@ serve(async (req: Request) => {
     // 2. Parse and route action
     const body: InviteStaffPayload = await req.json();
     const action = body.action || "invite";
-    const appOrigin = req.headers.get("origin") || "https://the-fitness-house-admin-panel.vercel.app";
-    const redirectTo = `${appOrigin}/login`;
+    const allowedRedirectOrigins = new Set([
+      "http://localhost:5173",
+      "http://127.0.0.1:5173",
+      "https://the-fitness-house-admin-panel.vercel.app",
+    ]);
+    const requestOrigin = req.headers.get("origin");
+    const redirectOrigin = requestOrigin && allowedRedirectOrigins.has(requestOrigin)
+      ? requestOrigin
+      : "http://127.0.0.1:5173";
+    const redirectTo = `${redirectOrigin}/login`;
 
     // Initialize privileged admin client for GoTrue and service_role operations
     const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
@@ -116,7 +124,7 @@ serve(async (req: Request) => {
       }
 
       // 1. Call atomic database RPC resend_staff_invitation
-      const { data: resendData, error: resendRpcError } = await adminClient.rpc(
+      const { data: resendData, error: resendRpcError } = await callerClient.rpc(
         "resend_staff_invitation",
         { p_invitation_id: invitationId }
       );
@@ -143,7 +151,7 @@ serve(async (req: Request) => {
       }
 
       // 3. Log security audit event
-      await adminClient.from("security_audit_logs").insert({
+      const { error: auditError } = await adminClient.from("security_audit_logs").insert({
         actor_id: callerUser.id,
         target_user_id: authInviteData?.user?.id || null,
         action: "invitation_resent",
@@ -153,6 +161,12 @@ serve(async (req: Request) => {
           new_expires_at: resendData.expires_at,
         },
       });
+      if (auditError) {
+        return new Response(
+          JSON.stringify({ error: "Invitation email was sent, but its delivery audit record could not be saved. Review security audit logging before retrying.", partialSuccess: true, invitationId }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
 
       return new Response(
         JSON.stringify({
@@ -177,7 +191,7 @@ serve(async (req: Request) => {
       }
 
       // Call atomic database RPC revoke_staff_invitation
-      const { data: revokeData, error: revokeRpcError } = await adminClient.rpc(
+      const { data: revokeData, error: revokeRpcError } = await callerClient.rpc(
         "revoke_staff_invitation",
         { p_invitation_id: invitationId }
       );
@@ -228,7 +242,7 @@ serve(async (req: Request) => {
     }
 
     // 1. Call atomic database RPC create_staff_invitation
-    const { data: createdInvite, error: createRpcError } = await adminClient.rpc(
+    const { data: createdInvite, error: createRpcError } = await callerClient.rpc(
       "create_staff_invitation",
       {
         p_email: email,
@@ -253,24 +267,22 @@ serve(async (req: Request) => {
 
     if (authInviteError) {
       // Revert/rollback invitation record so no orphaned pending invite exists
-      await adminClient.rpc("revoke_staff_invitation", { p_invitation_id: createdInvite.id });
+      const { error: revokeError } = await callerClient.rpc("revoke_staff_invitation", { p_invitation_id: createdInvite.id });
 
       return new Response(
-        JSON.stringify({ error: "Failed to dispatch invitation email: " + authInviteError.message }),
+        JSON.stringify({
+          error: revokeError
+            ? "Invitation email dispatch failed and the pending invitation could not be revoked. Administrator action is required."
+            : "Failed to dispatch invitation email: " + authInviteError.message,
+          invitationId: createdInvite.id,
+          cleanupSucceeded: !revokeError,
+        }),
         { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // 3. Update invitation with auth_user_id
-    if (authInviteData?.user?.id) {
-      await adminClient
-        .from("staff_invitations")
-        .update({ auth_user_id: authInviteData.user.id })
-        .eq("id", createdInvite.id);
-    }
-
-    // 4. Record audit log
-    await adminClient.from("security_audit_logs").insert({
+    // 3. Record audit log for the external Auth email dispatch.
+    const { error: auditError } = await adminClient.from("security_audit_logs").insert({
       actor_id: callerUser.id,
       target_user_id: authInviteData?.user?.id || null,
       action: "staff_invited",
@@ -281,6 +293,12 @@ serve(async (req: Request) => {
         invitation_id: createdInvite.id,
       },
     });
+    if (auditError) {
+      return new Response(
+        JSON.stringify({ error: "Invitation email was sent, but its delivery audit record could not be saved. Review security audit logging before retrying.", invitationId: createdInvite.id, partialSuccess: true }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     return new Response(
       JSON.stringify({

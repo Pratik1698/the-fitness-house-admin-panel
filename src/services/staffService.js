@@ -140,25 +140,19 @@ export async function getStaffRoster() {
   }
 
   try {
-    // Attempt fetching from public.profiles first (returns emails for admins)
-    let { data, error } = await activeClient
-      .from('profiles')
-      .select('id, email, full_name, role, is_active, created_at, deactivated_at')
-      .order('created_at', { ascending: true });
-
-    // If RLS restricted email access (for non-admin staff), fall back to public.v_staff_roster
-    if (error && (error.code === '42501' || error.message?.includes('policy'))) {
-      const fallback = await activeClient
-        .from('v_staff_roster')
-        .select('id, full_name, role, is_active, created_at, deactivated_at')
-        .order('created_at', { ascending: true });
-
-      if (fallback.error) {
-        return { data: [], error: fallback.error };
-      }
-      data = fallback.data;
-      error = null;
+    const { data: callerIsAdmin, error: roleError } = await activeClient.rpc('is_admin');
+    if (roleError) {
+      return { data: [], error: new Error(parseStaffSecurityError(roleError)) };
     }
+
+    const relation = callerIsAdmin ? 'profiles' : 'v_staff_roster';
+    const columns = callerIsAdmin
+      ? 'id, email, full_name, role, is_active, created_at, deactivated_at'
+      : 'id, full_name, role, is_active, created_at, deactivated_at';
+    const { data, error } = await activeClient
+      .from(relation)
+      .select(columns)
+      .order('created_at', { ascending: true });
 
     if (error) {
       return { data: [], error: new Error(parseStaffSecurityError(error)) };

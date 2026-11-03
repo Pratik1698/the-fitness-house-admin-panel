@@ -4,6 +4,7 @@ import {
   signOut as authSignOut,
   getSession,
   getUserRole,
+  canAcceptStaffInvitation,
   onAuthStateChange,
   isValidRole,
   changePassword as authChangePassword,
@@ -78,6 +79,7 @@ import {
   getPendingInvitations as getPendingInvitationsService,
   revokeInvitation as revokeInvitationService,
   resendInvitation as resendInvitationService,
+  acceptInvitation as acceptInvitationService,
   getSecurityAuditLogs as getSecurityAuditLogsService,
   getStaffOperationalSummary as getStaffOperationalSummaryService,
 } from '../services/staffService';
@@ -109,6 +111,7 @@ export function AppProvider({ children }) {
   const [session, setSession] = useState(null);
   const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
+  const [pendingInvitation, setPendingInvitation] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
 
@@ -397,7 +400,7 @@ export function AppProvider({ children }) {
     setPtError(null);
     try {
       const [assignmentsRes, sessionsRes] = await Promise.all([
-        getPtAssignments(),
+        getPtAssignments({ includeFinancials: role === 'admin' }),
         getPtSessions(),
       ]);
       if (assignmentsRes.data) {
@@ -411,7 +414,7 @@ export function AppProvider({ children }) {
     } finally {
       setPtLoading(false);
     }
-  }, []);
+  }, [role]);
 
   // Supabase Database Attendance & Check-ins State
   const [checkinsLoading, setCheckinsLoading] = useState(false);
@@ -588,6 +591,7 @@ export function AppProvider({ children }) {
             setSession(null);
             setUser(null);
             setRole(null);
+            setPendingInvitation(false);
             setAuthLoading(false);
           }
           return;
@@ -600,6 +604,7 @@ export function AppProvider({ children }) {
               setSession(currentSession);
               setUser(currentSession.user);
               setRole(null);
+              setPendingInvitation(false);
               setAuthError('Please verify your email address to continue.');
             }
           } else {
@@ -609,14 +614,25 @@ export function AppProvider({ children }) {
                 setSession(currentSession);
                 setUser(currentSession.user);
                 setRole(userRole);
+                setPendingInvitation(false);
                 setAuthError(null);
               } else {
-                // Fail closed: role invalid or profile missing
-                await authSignOut();
-                setSession(null);
-                setUser(null);
-                setRole(null);
-                setAuthError('Your account is not authorized to access this application. Please contact the gym administrator.');
+                const canAcceptInvitation = await canAcceptStaffInvitation();
+                if (canAcceptInvitation) {
+                  setSession(currentSession);
+                  setUser(currentSession.user);
+                  setRole(null);
+                  setPendingInvitation(true);
+                  setAuthError(null);
+                } else {
+                  // Fail closed: only a valid invitation may remain on the public acceptance screen.
+                  await authSignOut();
+                  setSession(null);
+                  setUser(null);
+                  setRole(null);
+                  setPendingInvitation(false);
+                  setAuthError('Your account is not authorized to access this application. Please contact the gym administrator.');
+                }
               }
             }
           }
@@ -625,6 +641,7 @@ export function AppProvider({ children }) {
             setSession(null);
             setUser(null);
             setRole(null);
+            setPendingInvitation(false);
             setAuthError(null);
             setGymInfoMigrationPending(false);
           }
@@ -635,6 +652,7 @@ export function AppProvider({ children }) {
           setSession(null);
           setUser(null);
           setRole(null);
+          setPendingInvitation(false);
           setGymInfoMigrationPending(false);
         }
       } finally {
@@ -654,6 +672,7 @@ export function AppProvider({ children }) {
         setSession(null);
         setUser(null);
         setRole(null);
+        setPendingInvitation(false);
         setAuthError(null);
         setGymInfoMigrationPending(false);
         setAuthLoading(false);
@@ -663,6 +682,7 @@ export function AppProvider({ children }) {
       if (event === 'PASSWORD_RECOVERY') {
         setSession(newSession);
         setUser(newSession?.user || null);
+        setPendingInvitation(false);
         setAuthLoading(false);
         return;
       }
@@ -675,6 +695,7 @@ export function AppProvider({ children }) {
               setSession(newSession);
               setUser(newSession.user);
               setRole(null);
+              setPendingInvitation(false);
               setAuthError('Please verify your email address to continue.');
             }
           } else {
@@ -685,14 +706,24 @@ export function AppProvider({ children }) {
               setSession(newSession);
               setUser(newSession.user);
               setRole(userRole);
+              setPendingInvitation(false);
               setAuthError(null);
             } else {
-              // Fail closed on invalid role
-              await authSignOut();
-              if (isMounted) {
+              const canAcceptInvitation = await canAcceptStaffInvitation();
+              if (!isMounted) return;
+              if (canAcceptInvitation) {
+                setSession(newSession);
+                setUser(newSession.user);
+                setRole(null);
+                setPendingInvitation(true);
+                setAuthError(null);
+              } else {
+                // Fail closed: only a valid invitation may remain on the public acceptance screen.
+                await authSignOut();
                 setSession(null);
                 setUser(null);
                 setRole(null);
+                setPendingInvitation(false);
                 setAuthError('Your account is not authorized to access this application. Please contact the gym administrator.');
               }
             }
@@ -720,13 +751,15 @@ export function AppProvider({ children }) {
         setSession(null);
         setUser(null);
         setRole(null);
+        setPendingInvitation(false);
         return { success: false, error: result.error };
       }
       setSession(result.session);
       setUser(result.user);
       setRole(result.role);
+      setPendingInvitation(Boolean(result.pendingInvitation));
       setAuthError(null);
-      return { success: true, user: result.user, role: result.role };
+      return { success: true, user: result.user, role: result.role, pendingInvitation: Boolean(result.pendingInvitation) };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
       setAuthError(errMsg);
@@ -736,6 +769,28 @@ export function AppProvider({ children }) {
     }
   }, []);
 
+  const acceptStaffInvitation = useCallback(async () => {
+    const result = await acceptInvitationService();
+    if (result.error) return result;
+
+    const currentUserId = user?.id || session?.user?.id || (await getSession())?.session?.user?.id;
+    const resolvedRole = await getUserRole(currentUserId);
+    if (!isValidRole(resolvedRole)) {
+      return {
+        data: null,
+        error: new Error('The invitation was accepted, but the active staff role could not be confirmed. Please sign in again or contact an administrator.'),
+      };
+    }
+
+    if (!user && (session?.user || (await getSession())?.session?.user)) {
+      setUser(session?.user || (await getSession())?.session?.user);
+    }
+    setRole(resolvedRole);
+    setPendingInvitation(false);
+    setAuthError(null);
+    return { data: result.data, error: null, role: resolvedRole };
+  }, [user, session]);
+
   const logout = useCallback(async () => {
     setAuthLoading(true);
     try {
@@ -744,6 +799,7 @@ export function AppProvider({ children }) {
       setSession(null);
       setUser(null);
       setRole(null);
+      setPendingInvitation(false);
       setAuthError(null);
       setGymInfoMigrationPending(false);
       setPtPackages([]);
@@ -1025,9 +1081,9 @@ export function AppProvider({ children }) {
       planId: memberData.planId,
       startDate: dbResult.start_date,
       expiryDate: dbResult.expiry_date,
-      totalFee: Number(dbResult.plan_price),
-      amountPaid: Number(dbResult.initial_payment_amount),
-      balance: Number(dbResult.outstanding_balance),
+      totalFee: Number(dbResult.plan_price ?? 0),
+      amountPaid: Number(dbResult.initial_payment_amount ?? 0),
+      balance: Number(dbResult.outstanding_balance ?? 0),
       status: getMembershipStatus({ expiryDate: dbResult.expiry_date }, today),
       joinDate: dbResult.start_date || today,
       totalCheckins: 0,
@@ -1857,16 +1913,21 @@ export function AppProvider({ children }) {
     authLoading,
     authError,
     isAuthenticated,
+    pendingInvitation,
     isEmailVerified,
     isEmailUnverified,
     isAdmin: role === 'admin',
     isStaff: role === 'staff',
     login,
+    acceptStaffInvitation,
     logout,
     changePassword: authChangePassword,
     requestPasswordReset: authRequestPasswordReset,
     resetPassword: authResetPassword,
     resendVerificationEmail: authResendVerificationEmail,
+    getSession,
+    getUserRole,
+    canAcceptStaffInvitation,
     isSupabaseConfigured,
 
     // Membership Plans Catalog State (from Supabase public.membership_plans)
@@ -1987,18 +2048,20 @@ export function useAuth() {
     authLoading: ctx.authLoading,
     authError: ctx.authError,
     isAuthenticated: ctx.isAuthenticated,
+    pendingInvitation: ctx.pendingInvitation,
     isEmailVerified: ctx.isEmailVerified,
     isEmailUnverified: ctx.isEmailUnverified,
     isAdmin: ctx.isAdmin,
     isStaff: ctx.isStaff,
     login: ctx.login,
+    acceptStaffInvitation: ctx.acceptStaffInvitation,
     logout: ctx.logout,
     changePassword: ctx.changePassword,
     requestPasswordReset: ctx.requestPasswordReset,
     resetPassword: ctx.resetPassword,
     resendVerificationEmail: ctx.resendVerificationEmail,
+    getSession: ctx.getSession,
+    getUserRole: ctx.getUserRole,
+    canAcceptStaffInvitation: ctx.canAcceptStaffInvitation,
   };
 }
-
-
-

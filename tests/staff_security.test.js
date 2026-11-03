@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   normalizeStaffMember,
   normalizeInvitation,
@@ -40,26 +41,27 @@ test.beforeEach(() => {
 // 1. Inactive-Account Rejection & Fail-Closed Authentication
 // ---------------------------------------------------------------------------
 test('1. Inactive user with an existing JWT cannot query protected tables', async () => {
-  // Simulate an inactive user whose JWT is still technically valid
-  // Database get_user_role() evaluates to NULL and is_staff() evaluates to false
+  // Simulate an inactive user whose JWT is still technically valid. The sanitized
+  // roster view evaluates to no rows when is_staff() is false.
   const mockClient = {
-    from: (table) => ({
-      select: () => ({
-        order: () => Promise.resolve({
-          data: null,
-          error: {
-            code: '42501',
-            message: `new row violates row-level security policy for table "${table}"`,
-          },
+    rpc: (fnName) => {
+      assert.equal(fnName, 'is_admin');
+      return Promise.resolve({ data: false, error: null });
+    },
+    from: (table) => {
+      assert.equal(table, 'v_staff_roster');
+      return {
+        select: () => ({
+          order: () => Promise.resolve({ data: [], error: null }),
         }),
-      }),
-    }),
+      };
+    },
   };
 
   setSupabaseClientForTesting(mockClient, true);
   const res = await getStaffRoster();
-  assert.ok(res.error);
-  assert.match(res.error.message, /violates row-level security policy|42501/i);
+  assert.equal(res.error, null);
+  assert.deepEqual(res.data, []);
 });
 
 test('2. Inactive user cannot regain a role through getUserRole() fallback', async () => {
@@ -1134,6 +1136,10 @@ test('42. [Mocked Contract] Authenticated admin cannot directly delete profiles 
 
 test('43. [Mocked Contract] Admin staff-roster reading continues to function', async () => {
   const mockClient = {
+    rpc: (fnName) => {
+      assert.equal(fnName, 'is_admin');
+      return Promise.resolve({ data: true, error: null });
+    },
     from: (table) => {
       assert.equal(table, 'profiles');
       return {
@@ -2487,34 +2493,12 @@ test('76. [Mocked Source-Level Contract] v_staff_roster exposes active/deactivat
   assert.equal(rosterRow.deactivated_at, null);
 });
 
-test('77. [Mocked Source-Level Contract] DROP VIEW IF EXISTS CASCADE dependency order prevents drop errors', () => {
-  // Simulates PostgreSQL view dependency graph:
-  // v_outstanding_payments depends on v_member_dues
-  const views = new Map();
-  views.set('v_member_dues', { created: true, dependents: ['v_outstanding_payments'] });
-  views.set('v_outstanding_payments', { created: true, dependsOn: 'v_member_dues' });
-
-  // Correct drop order: drop dependent v_outstanding_payments first, then v_member_dues
-  const executionLog = [];
-  const dropView = (viewName, cascade = false) => {
-    executionLog.push(`DROP ${viewName} CASCADE=${cascade}`);
-    views.delete(viewName);
-  };
-  const createView = (viewName) => {
-    executionLog.push(`CREATE ${viewName}`);
-    views.set(viewName, { created: true });
-  };
-
-  // Migration Section 12B Order:
-  dropView('v_outstanding_payments', true);
-  dropView('v_member_dues', true);
-  createView('v_member_dues');
-  createView('v_outstanding_payments');
-
-  assert.deepEqual(executionLog, [
-    'DROP v_outstanding_payments CASCADE=true',
-    'DROP v_member_dues CASCADE=true',
-    'CREATE v_member_dues',
-    'CREATE v_outstanding_payments',
-  ]);
+test('77. [Source-Level Contract] View updates preserve dependencies without CASCADE drops', () => {
+  const migrations = readFileSync(
+    new URL('../supabase/migrations/20261102000003_phase5_staff_security_and_invitations.sql', import.meta.url),
+    'utf8'
+  );
+  assert.doesNotMatch(migrations, /DROP\s+VIEW[^;]*CASCADE/i);
+  assert.match(migrations, /CREATE OR REPLACE VIEW public\.v_member_dues/);
+  assert.match(migrations, /CREATE OR REPLACE VIEW public\.v_outstanding_payments/);
 });
