@@ -36,6 +36,7 @@ export default function PersonalTraining() {
     ptPackagesLoading,
     ptPackagesError,
     reloadPtPackages,
+    trainers,
     addPtClient,
     updatePtClient,
     addPtSession,
@@ -888,13 +889,19 @@ export default function PersonalTraining() {
           }}
           members={members}
           packages={ptPackages}
+          trainers={trainers}
+          isAdmin={isAdmin}
           preselectedPackage={preselectedPackage}
-          onSave={(clientData, paymentData) => {
-            addPtClient(clientData, paymentData);
+          onSave={async (clientData, paymentData) => {
+            const res = await addPtClient(clientData, paymentData);
+            if (res && res.success === false) {
+              return res;
+            }
             setShowAssignModal(false);
             setPreselectedPackage(null);
             setNotice(`PT package "${clientData.package}" successfully assigned to ${clientData.memberName}!`);
             setTimeout(() => setNotice(null), 6000);
+            return { success: true };
           }}
         />
       )}
@@ -952,25 +959,30 @@ export default function PersonalTraining() {
 // ============================================================================
 // Modal 1: Assign PT Package Modal
 // ============================================================================
-function AssignPtModal({ isOpen, onClose, members, packages = [], preselectedPackage, onSave }) {
+function AssignPtModal({ isOpen, onClose, members, packages = [], trainers = [], isAdmin = false, preselectedPackage, onSave }) {
   const today = getLocalDateString();
   const defaultPkg = preselectedPackage || (packages.length > 0 ? packages[0] : null);
+  const defaultTrainerId = trainers.length > 0 ? trainers[0].id : '2cc58cc8-31c0-4f09-bec4-96ba7aea9a72';
+  const defaultTrainerName = trainers.length > 0 ? trainers[0].name : 'Coach Pravin Joshi';
 
   const [form, setForm] = useState({
     memberId: '',
     packageId: defaultPkg?.id || '',
     package: defaultPkg?.name || '',
     totalSessions: defaultPkg ? (defaultPkg.totalSessions || defaultPkg.sessions || 8) : 8,
-    trainer: 'Coach Pravin Joshi',
+    trainerId: defaultTrainerId,
+    trainer: defaultTrainerName,
     startDate: today,
     validTill: defaultPkg ? calculateExpiryDate(today, defaultPkg.validityDays || defaultPkg.validity || 30) : calculateExpiryDate(today, 30),
-    recordPayment: true,
+    recordPayment: isAdmin,
     paymentAmount: defaultPkg ? String(defaultPkg.price) : '0',
     paymentMethod: 'Cash',
     notes: '',
   });
 
   const [errors, setErrors] = useState({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
 
   // When preselected package or packages list changes
   useEffect(() => {
@@ -999,6 +1011,18 @@ function AssignPtModal({ isOpen, onClose, members, packages = [], preselectedPac
       }));
     }
   }, [preselectedPackage, packages]);
+
+  // Sync default trainer when trainers become available
+  useEffect(() => {
+    if (trainers.length > 0 && (!form.trainerId || form.trainerId === '2cc58cc8-31c0-4f09-bec4-96ba7aea9a72')) {
+      const match = trainers.find(t => t.id === form.trainerId) || trainers[0];
+      setForm(prev => ({
+        ...prev,
+        trainerId: match.id,
+        trainer: match.name,
+      }));
+    }
+  }, [trainers]);
 
   const handlePackageChange = (pkgId) => {
     const pkg = packages.find(p => p.id === pkgId);
@@ -1038,7 +1062,7 @@ function AssignPtModal({ isOpen, onClose, members, packages = [], preselectedPac
     const errs = {};
     if (!form.memberId) errs.memberId = 'Please select a gym member';
     if (!form.packageId) errs.packageId = 'Please select a PT package';
-    if (!form.trainer.trim()) errs.trainer = 'Trainer name is required';
+    if (!form.trainerId && !form.trainer.trim()) errs.trainer = 'Trainer is required';
     if (!form.startDate) errs.startDate = 'Start date is required';
     if (!form.validTill) errs.validTill = 'Validity date is required';
     if (form.startDate && form.validTill && form.validTill < form.startDate) {
@@ -1047,7 +1071,7 @@ function AssignPtModal({ isOpen, onClose, members, packages = [], preselectedPac
     if (Number(form.totalSessions) < 1) {
       errs.totalSessions = 'Sessions must be at least 1';
     }
-    if (form.recordPayment) {
+    if (isAdmin && form.recordPayment) {
       const amt = Number(form.paymentAmount);
       if (!form.paymentAmount || isNaN(amt) || amt <= 0) {
         errs.paymentAmount = 'Enter a valid payment amount';
@@ -1057,34 +1081,49 @@ function AssignPtModal({ isOpen, onClose, members, packages = [], preselectedPac
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (isSubmitting) return;
     if (!validate()) return;
 
-    const member = members.find(m => m.id === form.memberId);
-    const clientData = {
-      memberId: form.memberId,
-      memberName: member?.name || 'Member',
-      packageId: form.packageId,
-      package: form.package,
-      totalSessions: Number(form.totalSessions),
-      completedSessions: 0,
-      remainingSessions: Number(form.totalSessions),
-      startDate: form.startDate,
-      validTill: form.validTill,
-      trainer: form.trainer.trim(),
-      status: 'active',
-    };
+    setSubmitError(null);
+    setIsSubmitting(true);
 
-    const paymentData = form.recordPayment
-      ? {
-          amount: Number(form.paymentAmount),
-          method: form.paymentMethod,
-          notes: form.notes,
-        }
-      : null;
+    try {
+      const member = members.find(m => m.id === form.memberId);
+      const clientData = {
+        memberId: form.memberId,
+        memberName: member?.name || 'Member',
+        packageId: form.packageId,
+        package: form.package,
+        trainerId: form.trainerId,
+        trainer: form.trainer.trim(),
+        totalSessions: Number(form.totalSessions),
+        completedSessions: 0,
+        remainingSessions: Number(form.totalSessions),
+        startDate: form.startDate,
+        validTill: form.validTill,
+        status: 'active',
+        notes: form.notes,
+      };
 
-    onSave(clientData, paymentData);
+      const paymentData = (isAdmin && form.recordPayment)
+        ? {
+            amount: Number(form.paymentAmount),
+            method: form.paymentMethod,
+            notes: form.notes,
+          }
+        : null;
+
+      const res = await onSave(clientData, paymentData);
+      if (res && res.success === false) {
+        setSubmitError(res.error || 'Failed to assign package.');
+      }
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -1095,16 +1134,31 @@ function AssignPtModal({ isOpen, onClose, members, packages = [], preselectedPac
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit} disabled={packages.length === 0}>
-            Confirm Assignment
+          <Button onClick={handleSubmit} disabled={packages.length === 0 || isSubmitting}>
+            {isSubmitting ? (
+              <span className="flex items-center gap-2">
+                <Loader2 size={16} className="animate-spin" />
+                Assigning...
+              </span>
+            ) : (
+              'Confirm Assignment'
+            )}
           </Button>
         </>
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Error Notice */}
+        {submitError && (
+          <div className="p-3 rounded-xl bg-[#FEF3F2] border border-[#FECDCA] text-xs text-[#B42318] flex items-center gap-2">
+            <AlertCircle size={16} className="shrink-0" />
+            <span>{submitError}</span>
+          </div>
+        )}
+
         {/* Empty Packages Notice */}
         {packages.length === 0 && (
           <div className="p-3 rounded-xl bg-[#FEF3F2] border border-[#FECDCA] text-xs text-[#B42318] flex items-center gap-2">
@@ -1147,12 +1201,28 @@ function AssignPtModal({ isOpen, onClose, members, packages = [], preselectedPac
               }))
             ]}
           />
-          <Input
+          <Select
             label="Assigned Trainer *"
-            value={form.trainer}
-            onChange={e => setForm(f => ({ ...f, trainer: e.target.value }))}
-            error={errors.trainer}
-            placeholder="e.g. Coach Pravin Joshi"
+            value={form.trainerId}
+            onChange={e => {
+              const selectedId = e.target.value;
+              const selectedTrainer = (trainers.length > 0 ? trainers : [
+                { id: '2cc58cc8-31c0-4f09-bec4-96ba7aea9a72', name: 'Coach Pravin Joshi' }
+              ]).find(t => t.id === selectedId);
+              setForm(f => ({
+                ...f,
+                trainerId: selectedId,
+                trainer: selectedTrainer ? selectedTrainer.name : 'Coach Pravin Joshi',
+              }));
+              setErrors(prev => ({ ...prev, trainerId: undefined, trainer: undefined }));
+            }}
+            error={errors.trainerId || errors.trainer}
+            options={(trainers.length > 0 ? trainers : [
+              { id: '2cc58cc8-31c0-4f09-bec4-96ba7aea9a72', name: 'Coach Pravin Joshi' }
+            ]).map(t => ({
+              value: t.id,
+              label: `${t.name}${t.phone ? ` (${t.phone})` : ''}`,
+            }))}
           />
         </div>
 
@@ -1184,44 +1254,56 @@ function AssignPtModal({ isOpen, onClose, members, packages = [], preselectedPac
 
         {/* Payment Integration Section */}
         <div className="pt-3 border-t border-[#E1E6E9]">
-          <div className="flex items-center gap-2 mb-3">
-            <input
-              type="checkbox"
-              id="recordPaymentCheck"
-              checked={form.recordPayment}
-              onChange={e => setForm(f => ({ ...f, recordPayment: e.target.checked }))}
-              className="w-4 h-4 text-[#16845B] rounded border-[#CBD5E1] focus:ring-[#16845B]"
-            />
-            <label htmlFor="recordPaymentCheck" className="text-xs font-bold text-[#25313B] cursor-pointer">
-              Record PT Package Payment Now
-            </label>
-          </div>
-
-          {form.recordPayment && (
-            <div className="p-3.5 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <Input
-                  label="Payment Amount (₹) *"
-                  type="number"
-                  min="1"
-                  value={form.paymentAmount}
-                  onChange={e => setForm(f => ({ ...f, paymentAmount: e.target.value }))}
-                  error={errors.paymentAmount}
+          {isAdmin ? (
+            <>
+              <div className="flex items-center gap-2 mb-3">
+                <input
+                  type="checkbox"
+                  id="recordPaymentCheck"
+                  checked={form.recordPayment}
+                  onChange={e => setForm(f => ({ ...f, recordPayment: e.target.checked }))}
+                  className="w-4 h-4 text-[#16845B] rounded border-[#CBD5E1] focus:ring-[#16845B]"
                 />
-                <Select
-                  label="Payment Method *"
-                  value={form.paymentMethod}
-                  onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}
-                  options={[
-                    { value: 'Cash', label: 'Cash' },
-                    { value: 'UPI', label: 'UPI / QR' },
-                    { value: 'Card', label: 'Debit / Credit Card' },
-                  ]}
-                />
+                <label htmlFor="recordPaymentCheck" className="text-xs font-bold text-[#25313B] cursor-pointer">
+                  Record PT Package Payment Now
+                </label>
               </div>
-              <p className="text-[11px] text-[#16845B] font-medium">
-                Payment will be logged in the payments ledger under "Personal Training" revenue without affecting regular gym membership balances.
-              </p>
+
+              {form.recordPayment && (
+                <div className="p-3.5 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] space-y-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <Input
+                      label="Payment Amount (₹) *"
+                      type="number"
+                      min="1"
+                      value={form.paymentAmount}
+                      onChange={e => setForm(f => ({ ...f, paymentAmount: e.target.value }))}
+                      error={errors.paymentAmount}
+                    />
+                    <Select
+                      label="Payment Method *"
+                      value={form.paymentMethod}
+                      onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}
+                      options={[
+                        { value: 'Cash', label: 'Cash' },
+                        { value: 'UPI', label: 'UPI / QR' },
+                        { value: 'Card', label: 'Debit / Credit Card' },
+                      ]}
+                    />
+                  </div>
+                  <p className="text-[11px] text-[#16845B] font-medium">
+                    Payment will be logged in the payments ledger under "Personal Training" revenue without affecting regular gym membership balances.
+                  </p>
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="p-3 rounded-xl bg-[#F0FDF4] border border-[#BBF7D0] text-xs text-[#166534] flex items-start gap-2">
+              <Sparkles size={16} className="shrink-0 mt-0.5 text-[#16845B]" />
+              <div>
+                <span className="font-semibold">Staff Operational Notice: </span>
+                Package will be assigned with a ₹0 upfront payment. Any member fee collection must be recorded by an Administrator.
+              </div>
             </div>
           )}
         </div>

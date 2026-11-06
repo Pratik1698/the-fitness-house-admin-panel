@@ -33,6 +33,8 @@ import {
 import {
   getPtAssignments,
   getPtSessions,
+  getTrainers,
+  assignPtPackage as assignPtPackageService,
 } from '../services/ptService';
 import {
   getAttendanceLogs,
@@ -394,20 +396,47 @@ export function AppProvider({ children }) {
   // Supabase Database Personal Training State
   const [ptLoading, setPtLoading] = useState(false);
   const [ptError, setPtError] = useState(null);
+  const [trainers, setTrainers] = useState([
+    { id: '2cc58cc8-31c0-4f09-bec4-96ba7aea9a72', name: 'Coach Pravin Joshi', phone: '+91 7385846525', is_active: true }
+  ]);
+  const [trainersLoading, setTrainersLoading] = useState(false);
+  const [trainersError, setTrainersError] = useState(null);
+
+  const fetchTrainers = useCallback(async () => {
+    setTrainersLoading(true);
+    setTrainersError(null);
+    try {
+      const { data, error } = await getTrainers();
+      if (error) {
+        setTrainersError(error.message || 'Failed to fetch trainers.');
+      } else if (data && data.length > 0) {
+        setTrainers(data);
+        setTrainersError(null);
+      }
+    } catch (err) {
+      setTrainersError(err instanceof Error ? err.message : 'Unexpected error loading trainers.');
+    } finally {
+      setTrainersLoading(false);
+    }
+  }, []);
 
   const fetchPtData = useCallback(async () => {
     setPtLoading(true);
     setPtError(null);
     try {
-      const [assignmentsRes, sessionsRes] = await Promise.all([
+      const [assignmentsRes, sessionsRes, trainersRes] = await Promise.all([
         getPtAssignments({ includeFinancials: role === 'admin' }),
         getPtSessions(),
+        getTrainers(),
       ]);
       if (assignmentsRes.data) {
         setPtClients(assignmentsRes.data);
       }
       if (sessionsRes.data) {
         setPtSessions(sessionsRes.data);
+      }
+      if (trainersRes.data && trainersRes.data.length > 0) {
+        setTrainers(trainersRes.data);
       }
     } catch (err) {
       setPtError(err instanceof Error ? err.message : 'Unexpected error loading PT data.');
@@ -1335,9 +1364,53 @@ export function AppProvider({ children }) {
   }, [session, fetchCheckins]);
 
   /**
-   * Adds a new PT assignment for a member with optional payment recording
+   * Adds a new PT assignment for a member via authoritative database RPC or local fallback.
    */
-  const addPtClient = useCallback((clientData, paymentData = null) => {
+  const addPtClient = useCallback(async (clientData, paymentData = null) => {
+    // If Supabase is configured and user is authenticated, use authoritative RPC
+    if (session?.user && isSupabaseConfigured) {
+      try {
+        let trainerId = clientData.trainerId;
+        if (!trainerId) {
+          const found = trainers.find(t => t.name?.toLowerCase() === (clientData.trainer || '').toLowerCase());
+          trainerId = found ? found.id : '2cc58cc8-31c0-4f09-bec4-96ba7aea9a72';
+        }
+
+        // Enforce role-based financial isolation: staff cannot record initial payment
+        const paymentAmount = (role === 'admin' && paymentData?.amount) ? Number(paymentData.amount) : 0;
+        const paymentMethod = paymentAmount > 0 ? (paymentData?.method || 'Cash') : null;
+
+        const rpcPayload = {
+          memberId: clientData.memberId,
+          packageId: clientData.packageId,
+          trainerId,
+          startDate: clientData.startDate || getLocalDateString(),
+          initialPaymentAmount: paymentAmount,
+          paymentMethod,
+          notes: (clientData.notes || paymentData?.notes || '').trim(),
+        };
+
+        const { data, error } = await assignPtPackageService(rpcPayload);
+        if (error) {
+          console.error('[AppContext.addPtClient] assignPtPackage error:', error);
+          return { success: false, error: error.message || 'Failed to assign PT package.' };
+        }
+
+        // Refresh authoritative datasets
+        await Promise.all([
+          fetchPtData(),
+          fetchPayments(),
+          fetchMembers(),
+        ]);
+
+        return { success: true, data };
+      } catch (err) {
+        console.error('[AppContext.addPtClient] Unexpected exception:', err);
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    // In-memory fallback (unauthenticated / offline demo mode)
     const today = getLocalDateString();
     const totalSessions = Number(clientData.totalSessions) || 8;
     const completedSessions = Number(clientData.completedSessions) || 0;
@@ -1383,8 +1456,8 @@ export function AppProvider({ children }) {
       });
     }
 
-    return newClient;
-  }, [addPayment]);
+    return { success: true, data: newClient };
+  }, [session, role, trainers, fetchPtData, fetchPayments, fetchMembers, addPayment]);
 
   /**
    * Updates an existing PT client's assignment
@@ -1957,6 +2030,10 @@ export function AppProvider({ children }) {
     ptLoading,
     ptError,
     reloadPtData: fetchPtData,
+    trainers,
+    trainersLoading,
+    trainersError,
+    reloadTrainers: fetchTrainers,
 
     // PT Packages Catalog State (Phase 3: Supabase public.pt_packages)
     ptPackages, // Active packages only (for personal training assignments & pricing)

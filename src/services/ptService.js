@@ -1,20 +1,90 @@
-import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { supabase as defaultSupabase, isSupabaseConfigured as defaultIsConfigured } from './supabaseClient.js';
 
 /**
  * Personal Training Service
  * The Fitness House Gym Management Admin Panel
  *
- * Provides typed methods for interacting with PT assignments and sessions in Supabase.
+ * Provides typed methods for interacting with PT assignments, sessions, and trainers in Supabase.
+ * Enforces atomic database RPC assignment (assign_pt_package) with idempotency, advisory locking,
+ * and role-based financial masking.
  */
+
+// ---------------------------------------------------------------------------
+// Testing Client Injection Support
+// ---------------------------------------------------------------------------
+let _injectedClient = null;
+let _injectedConfigured = null;
+
+export function setSupabaseClientForTesting(client, configured = true) {
+  _injectedClient = client;
+  _injectedConfigured = configured;
+}
+
+export function resetSupabaseClientForTesting() {
+  _injectedClient = null;
+  _injectedConfigured = null;
+}
+
+function getActiveClient() {
+  return _injectedClient || defaultSupabase;
+}
+
+function getActiveConfigured() {
+  if (_injectedConfigured !== null) return _injectedConfigured;
+  return defaultIsConfigured;
+}
+
+/**
+ * Fetches all active trainers from public.trainers.
+ *
+ * @returns {Promise<{ data: Array<object>|null, error: Error|null }>}
+ */
+export async function getTrainers() {
+  const client = getActiveClient();
+  const configured = getActiveConfigured();
+
+  if (!configured || !client) {
+    return {
+      data: [{ id: '2cc58cc8-31c0-4f09-bec4-96ba7aea9a72', name: 'Coach Pravin Joshi', phone: '+91 7385846525', is_active: true }],
+      error: null,
+    };
+  }
+
+  try {
+    const { data, error } = await client
+      .from('trainers')
+      .select('id, name, phone, is_active')
+      .eq('is_active', true)
+      .order('name');
+
+    if (error) {
+      console.error('[ptService.getTrainers] Database error:', error);
+      return { data: null, error: new Error(error.message || 'Failed to fetch trainers from database.') };
+    }
+
+    return { data: data || [], error: null };
+  } catch (err) {
+    console.error('[ptService.getTrainers] Unexpected exception:', err);
+    return {
+      data: null,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
+}
 
 /**
  * Fetches all PT assignments from public.pt_assignments joined with
  * members, trainers, and pt_packages.
  *
+ * @param {object} [options]
+ * @param {boolean} [options.includeFinancials=false] - Whether to query v_admin_pt_assignments (admin only)
  * @returns {Promise<{ data: Array<object>|null, error: Error|null }>}
  */
 export async function getPtAssignments({ includeFinancials = false } = {}) {
-  if (!isSupabaseConfigured) {
+  const client = getActiveClient();
+  const configured = getActiveConfigured();
+
+  if (!configured || !client) {
     return {
       data: null,
       error: new Error('Supabase client is not configured.'),
@@ -24,7 +94,7 @@ export async function getPtAssignments({ includeFinancials = false } = {}) {
   try {
     const relation = includeFinancials ? 'v_admin_pt_assignments' : 'pt_assignments';
     const financialColumns = includeFinancials ? 'fee_amount, amount_paid, balance,' : '';
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from(relation)
       .select(`
         id,
@@ -108,13 +178,99 @@ export async function getPtAssignments({ includeFinancials = false } = {}) {
 }
 
 /**
+ * Assigns a personal training package to a member via the authoritative atomic database RPC.
+ *
+ * Enforces:
+ * - Atomic database transaction (creates pt_assignments and initial payment atomically).
+ * - Idempotency key tracking in public.idempotency_keys.
+ * - Concurrency control via advisory transaction locking.
+ * - Role-based authorization: staff must have initialPaymentAmount = 0.
+ * - Financial masking: staff receives masked response (no fees/balances), admin receives full financial details.
+ *
+ * @param {object} payload
+ * @param {string} payload.memberId - UUID of active member
+ * @param {string} payload.packageId - UUID of active PT package
+ * @param {string} payload.trainerId - UUID of active trainer
+ * @param {string} payload.startDate - Start date in YYYY-MM-DD
+ * @param {number} [payload.initialPaymentAmount=0] - Initial payment (must be 0 for staff)
+ * @param {string} [payload.paymentMethod='Cash'] - Payment method ('Cash', 'UPI', 'Card') if initialPayment > 0
+ * @param {string} [payload.notes=''] - Optional assignment notes
+ * @param {string} [payload.idempotencyKey] - Unique idempotency key (defaults to UUID)
+ * @returns {Promise<{ data: object|null, error: Error|null }>}
+ */
+export async function assignPtPackage({
+  memberId,
+  packageId,
+  trainerId,
+  startDate,
+  initialPaymentAmount = 0,
+  paymentMethod = 'Cash',
+  notes = '',
+  idempotencyKey,
+} = {}) {
+  const client = getActiveClient();
+  const configured = getActiveConfigured();
+
+  if (!configured || !client) {
+    return { data: null, error: new Error('Supabase client is not configured.') };
+  }
+
+  // Input validation
+  if (!memberId) {
+    return { data: null, error: new Error('Member ID is required.') };
+  }
+  if (!packageId) {
+    return { data: null, error: new Error('PT Package ID is required.') };
+  }
+  if (!trainerId) {
+    return { data: null, error: new Error('Trainer ID is required.') };
+  }
+  if (!startDate) {
+    return { data: null, error: new Error('Start date is required.') };
+  }
+
+  const numericAmount = Number(initialPaymentAmount || 0);
+  if (isNaN(numericAmount) || numericAmount < 0) {
+    return { data: null, error: new Error('Initial payment amount cannot be negative.') };
+  }
+
+  const key = idempotencyKey || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `pt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`);
+
+  try {
+    const { data, error } = await client.rpc('assign_pt_package', {
+      p_member_id: memberId,
+      p_package_id: packageId,
+      p_trainer_id: trainerId,
+      p_start_date: startDate,
+      p_initial_payment_amount: numericAmount,
+      p_payment_method: numericAmount > 0 ? paymentMethod : null,
+      p_notes: notes ? notes.trim() : null,
+      p_idempotency_key: key,
+    });
+
+    if (error) {
+      console.error('[ptService.assignPtPackage] RPC Error:', error);
+      return { data: null, error: new Error(error.message || 'Failed to assign PT package.') };
+    }
+
+    return { data, error: null };
+  } catch (err) {
+    console.error('[ptService.assignPtPackage] Unexpected exception:', err);
+    return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+
+/**
  * Fetches completed PT sessions from public.pt_sessions joined with
  * pt_assignments, members, and trainers.
  *
  * @returns {Promise<{ data: Array<object>|null, error: Error|null }>}
  */
 export async function getPtSessions() {
-  if (!isSupabaseConfigured) {
+  const client = getActiveClient();
+  const configured = getActiveConfigured();
+
+  if (!configured || !client) {
     return {
       data: null,
       error: new Error('Supabase client is not configured.'),
@@ -122,7 +278,7 @@ export async function getPtSessions() {
   }
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await client
       .from('pt_sessions')
       .select(`
         id,
@@ -201,4 +357,4 @@ export {
   togglePtPackageStatus,
   normalizePtPackage,
   validatePtPackageInput,
-} from './ptPackageService';
+} from './ptPackageService.js';
