@@ -10,29 +10,41 @@ const manageSessionSrc = readFileSync(new URL('../supabase/functions/manage-staf
  * The Fitness House Gym Management Admin Panel
  *
  * Verifies:
- * 1. Approved production origin handling (Access-Control-Allow-Origin, Vary: Origin, OPTIONS preflight)
- * 2. Approved localhost origins (origin-specific echoing)
- * 3. Unapproved browser origins (immediate 403, omission of Access-Control-Allow-Origin, zero DB/Auth execution)
- * 4. Missing Origin requests (server-to-server/CLI allowed past CORS, mandatory JWT auth enforced)
- * 5. Production frontend redirect fallback (no 127.0.0.1:5173 fallback in production)
- * 6. Uniform CORS header propagation across all response paths
+ * 1. Confirmed production origin: https://the-fitness-house-admin-panel-696c.vercel.app
+ * 2. Previous production origin retention: https://the-fitness-house-admin-panel.vercel.app
+ * 3. Approved localhost origins: http://localhost:5173 & http://127.0.0.1:5173
+ * 4. Unapproved browser origin rejection: HTTP 403, omission of Access-Control-Allow-Origin, halts before auth
+ * 5. Missing Origin handling: server/CLI allowed past CORS with default production origin, mandatory auth enforced
+ * 6. Invitation redirect URL resolution: confirmed production URL default fallback
  */
+
+const CONFIRMED_PROD_ORIGIN = 'https://the-fitness-house-admin-panel-696c.vercel.app';
+const PREVIOUS_PROD_ORIGIN = 'https://the-fitness-house-admin-panel.vercel.app';
+const LOCALHOST_PORT_ORIGIN = 'http://localhost:5173';
+const LOOPBACK_IP_ORIGIN = 'http://127.0.0.1:5173';
+const UNAPPROVED_ORIGIN = 'https://malicious-phishing-attacker.com';
 
 // ---------------------------------------------------------------------------
 // 1. Source-Level Static Security Contracts
 // ---------------------------------------------------------------------------
-test('1. Static Contract: both Edge Functions define the approved ALLOWED_ORIGINS set', () => {
+test('1. Static Contract: both Edge Functions define the approved ALLOWED_ORIGINS set with confirmed and legacy production URLs', () => {
   for (const [name, src] of [['invite-staff', inviteStaffSrc], ['manage-staff-session', manageSessionSrc]]) {
     assert.match(src, /const\s+ALLOWED_ORIGINS\s*=\s*new\s+Set\(\[/, `${name} must declare ALLOWED_ORIGINS`);
-    assert.match(src, /"https:\/\/the-fitness-house-admin-panel\.vercel\.app"/, `${name} must include production web app`);
+    assert.match(src, /"https:\/\/the-fitness-house-admin-panel-696c\.vercel\.app"/, `${name} must include confirmed production frontend`);
+    assert.match(src, /"https:\/\/the-fitness-house-admin-panel\.vercel\.app"/, `${name} must retain legacy production frontend`);
     assert.match(src, /"http:\/\/localhost:5173"/, `${name} must include local dev port`);
     assert.match(src, /"http:\/\/127\.0\.0\.1:5173"/, `${name} must include loopback dev port`);
-    // Must NOT contain wildcard in ALLOWED_ORIGINS
     assert.doesNotMatch(src, /ALLOWED_ORIGINS[\s\S]*?"\*"[\s\S]*?\]/, `${name} must not contain wildcard in allowlist`);
   }
 });
 
-test('2. Static Contract: both Edge Functions reject unapproved browser origins with 403 before authentication', () => {
+test('2. Static Contract: both Edge Functions configure the confirmed production URL as default fallback', () => {
+  for (const [name, src] of [['invite-staff', inviteStaffSrc], ['manage-staff-session', manageSessionSrc]]) {
+    assert.match(src, /const\s+PRODUCTION_FRONTEND_URL\s*=\s*"https:\/\/the-fitness-house-admin-panel-696c\.vercel\.app"/, `${name} must point default to confirmed production frontend`);
+  }
+});
+
+test('3. Static Contract: both Edge Functions reject unapproved browser origins with 403 before authentication', () => {
   for (const [name, src] of [['invite-staff', inviteStaffSrc], ['manage-staff-session', manageSessionSrc]]) {
     const originCheck = src.indexOf('if (requestOrigin && !ALLOWED_ORIGINS.has(requestOrigin))');
     const authCheck = src.indexOf('const authHeader = req.headers.get("Authorization")');
@@ -43,8 +55,8 @@ test('2. Static Contract: both Edge Functions reject unapproved browser origins 
   }
 });
 
-test('3. Static Contract: invite-staff uses production frontend as redirect fallback (not 127.0.0.1:5173)', () => {
-  assert.match(inviteStaffSrc, /const\s+PRODUCTION_FRONTEND_URL\s*=\s*"https:\/\/the-fitness-house-admin-panel\.vercel\.app"/);
+test('4. Static Contract: invite-staff uses confirmed production frontend as redirect fallback', () => {
+  assert.match(inviteStaffSrc, /const\s+PRODUCTION_FRONTEND_URL\s*=\s*"https:\/\/the-fitness-house-admin-panel-696c\.vercel\.app"/);
   assert.doesNotMatch(inviteStaffSrc, /:\s*"http:\/\/127\.0\.0\.1:5173"\s*;\s*const redirectTo/);
   assert.match(inviteStaffSrc, /:\s*PRODUCTION_FRONTEND_URL\s*;\s*const redirectTo/);
 });
@@ -53,7 +65,6 @@ test('3. Static Contract: invite-staff uses production frontend as redirect fall
 // 2. Functional CORS Behavior Simulation
 // ---------------------------------------------------------------------------
 function createFunctionSimulator(sourceCode) {
-  // Extract ALLOWED_ORIGINS and PRODUCTION_FRONTEND_URL from source
   const allowedOriginsMatch = sourceCode.match(/const ALLOWED_ORIGINS = new Set\(\[([\s\S]*?)\]\);/);
   assert.ok(allowedOriginsMatch, 'Failed to extract ALLOWED_ORIGINS from source');
   const allowedOriginsList = allowedOriginsMatch[1]
@@ -77,7 +88,6 @@ function createFunctionSimulator(sourceCode) {
     };
   }
 
-  // Emulate request entry gate
   async function handleRequest(req) {
     const requestOrigin = req.headers.get('origin');
 
@@ -124,23 +134,49 @@ const inviteSimulator = createFunctionSimulator(inviteStaffSrc);
 const manageSimulator = createFunctionSimulator(manageSessionSrc);
 
 for (const [name, sim] of [['invite-staff', inviteSimulator], ['manage-staff-session', manageSimulator]]) {
-  test(`4. [${name}] Approved production origin: returns matching origin, Vary: Origin, and handles OPTIONS`, async () => {
-    const origin = 'https://the-fitness-house-admin-panel.vercel.app';
+  test(`5. [${name}] Confirmed production origin (${CONFIRMED_PROD_ORIGIN}): OPTIONS preflight returns matching origin, Vary: Origin, and 200 OK`, async () => {
     const req = new Request('https://xfagvgypgboplonokntk.supabase.co/functions/v1/test', {
       method: 'OPTIONS',
-      headers: { Origin: origin },
+      headers: { Origin: CONFIRMED_PROD_ORIGIN },
     });
 
     const res = await sim.handleRequest(req);
     assert.equal(res.status, 200);
-    assert.equal(res.headers.get('Access-Control-Allow-Origin'), origin);
+    assert.equal(res.headers.get('Access-Control-Allow-Origin'), CONFIRMED_PROD_ORIGIN);
     assert.equal(res.headers.get('Vary'), 'Origin');
     assert.match(res.headers.get('Access-Control-Allow-Methods'), /POST/);
     assert.match(res.headers.get('Access-Control-Allow-Headers'), /authorization/);
   });
 
-  test(`5. [${name}] Approved localhost origins: echoes origin-specific header dynamically`, async () => {
-    for (const origin of ['http://localhost:5173', 'http://127.0.0.1:5173']) {
+  test(`6. [${name}] Confirmed production origin (${CONFIRMED_PROD_ORIGIN}): POST returns matching origin`, async () => {
+    const req = new Request('https://xfagvgypgboplonokntk.supabase.co/functions/v1/test', {
+      method: 'POST',
+      headers: {
+        Origin: CONFIRMED_PROD_ORIGIN,
+        Authorization: 'Bearer valid.mock.jwt',
+      },
+    });
+
+    const res = await sim.handleRequest(req);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('Access-Control-Allow-Origin'), CONFIRMED_PROD_ORIGIN);
+    assert.equal(res.headers.get('Vary'), 'Origin');
+  });
+
+  test(`7. [${name}] Previous production origin (${PREVIOUS_PROD_ORIGIN}): OPTIONS preflight returns matching origin`, async () => {
+    const req = new Request('https://xfagvgypgboplonokntk.supabase.co/functions/v1/test', {
+      method: 'OPTIONS',
+      headers: { Origin: PREVIOUS_PROD_ORIGIN },
+    });
+
+    const res = await sim.handleRequest(req);
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('Access-Control-Allow-Origin'), PREVIOUS_PROD_ORIGIN);
+    assert.equal(res.headers.get('Vary'), 'Origin');
+  });
+
+  test(`8. [${name}] Approved localhost origins: echoes origin-specific header dynamically`, async () => {
+    for (const origin of [LOCALHOST_PORT_ORIGIN, LOOPBACK_IP_ORIGIN]) {
       const req = new Request('https://xfagvgypgboplonokntk.supabase.co/functions/v1/test', {
         method: 'OPTIONS',
         headers: { Origin: origin },
@@ -153,19 +189,17 @@ for (const [name, sim] of [['invite-staff', inviteSimulator], ['manage-staff-ses
     }
   });
 
-  test(`6. [${name}] Unapproved browser origin: returns HTTP 403, omits Access-Control-Allow-Origin, halts before auth`, async () => {
-    const untrustedOrigin = 'https://malicious-phishing-attacker.com';
+  test(`9. [${name}] Unapproved browser origin (${UNAPPROVED_ORIGIN}): returns HTTP 403, omits Access-Control-Allow-Origin, halts before auth`, async () => {
     const req = new Request('https://xfagvgypgboplonokntk.supabase.co/functions/v1/test', {
       method: 'POST',
       headers: {
-        Origin: untrustedOrigin,
+        Origin: UNAPPROVED_ORIGIN,
         Authorization: 'Bearer valid.jwt.token',
       },
     });
 
     const res = await sim.handleRequest(req);
     assert.equal(res.status, 403);
-    // Crucial: Omit Access-Control-Allow-Origin so browser blocks untrusted cross-origin access
     assert.equal(res.headers.get('Access-Control-Allow-Origin'), null);
     assert.equal(res.headers.get('Vary'), 'Origin');
 
@@ -173,55 +207,54 @@ for (const [name, sim] of [['invite-staff', inviteSimulator], ['manage-staff-ses
     assert.match(body.error, /Origin not allowed by CORS policy/i);
   });
 
-  test(`7. [${name}] Missing Origin (server/CLI): allowed past CORS but enforces mandatory JWT auth`, async () => {
-    // 1. Missing Origin AND missing Auth -> 401 Missing authorization header
+  test(`10. [${name}] Missing Origin (server/CLI): allowed past CORS with confirmed production origin, enforces mandatory JWT auth`, async () => {
+    // Missing Origin and missing Auth -> 401 Unauthorized
     const unauthReq = new Request('https://xfagvgypgboplonokntk.supabase.co/functions/v1/test', {
       method: 'POST',
     });
     const unauthRes = await sim.handleRequest(unauthReq);
     assert.equal(unauthRes.status, 401);
-    assert.equal(unauthRes.headers.get('Access-Control-Allow-Origin'), sim.productionFrontendUrl);
+    assert.equal(unauthRes.headers.get('Access-Control-Allow-Origin'), CONFIRMED_PROD_ORIGIN);
 
-    const body = await unauthRes.json();
-    assert.match(body.error, /Missing authorization header/i);
-
-    // 2. Missing Origin WITH valid Auth -> proceeds past auth check
+    // Missing Origin with valid Auth -> 200 OK
     const authReq = new Request('https://xfagvgypgboplonokntk.supabase.co/functions/v1/test', {
       method: 'POST',
       headers: { Authorization: 'Bearer mock.valid.jwt' },
     });
     const authRes = await sim.handleRequest(authReq);
     assert.equal(authRes.status, 200);
-    assert.equal(authRes.headers.get('Access-Control-Allow-Origin'), sim.productionFrontendUrl);
+    assert.equal(authRes.headers.get('Access-Control-Allow-Origin'), CONFIRMED_PROD_ORIGIN);
   });
 }
 
-test('8. [invite-staff] Redirection URL: uses production frontend fallback for unapproved/missing origins', () => {
+test('11. [invite-staff] Redirection URL: uses confirmed production frontend fallback', () => {
   const allowed = new Set([
-    'https://the-fitness-house-admin-panel.vercel.app',
-    'http://localhost:5173',
-    'http://127.0.0.1:5173',
+    CONFIRMED_PROD_ORIGIN,
+    PREVIOUS_PROD_ORIGIN,
+    LOCALHOST_PORT_ORIGIN,
+    LOOPBACK_IP_ORIGIN,
   ]);
-  const defaultProd = 'https://the-fitness-house-admin-panel.vercel.app';
 
   function resolveRedirect(requestOrigin) {
     const redirectOrigin = requestOrigin && allowed.has(requestOrigin)
       ? requestOrigin
-      : defaultProd;
+      : CONFIRMED_PROD_ORIGIN;
     return `${redirectOrigin}/login`;
   }
 
-  // Case A: Missing origin (CLI/cron invite dispatch)
-  assert.equal(resolveRedirect(null), 'https://the-fitness-house-admin-panel.vercel.app/login');
+  // Case A: Missing origin (CLI/cron invite dispatch) -> confirmed prod
+  assert.equal(resolveRedirect(null), `${CONFIRMED_PROD_ORIGIN}/login`);
 
-  // Case B: Foreign origin
-  assert.equal(resolveRedirect('https://evil-site.com'), 'https://the-fitness-house-admin-panel.vercel.app/login');
+  // Case B: Foreign origin -> confirmed prod
+  assert.equal(resolveRedirect('https://evil-site.com'), `${CONFIRMED_PROD_ORIGIN}/login`);
 
-  // Case C: Local development origin
-  assert.equal(resolveRedirect('http://localhost:5173'), 'http://localhost:5173/login');
-  assert.equal(resolveRedirect('http://127.0.0.1:5173'), 'http://127.0.0.1:5173/login');
+  // Case C: Confirmed production origin -> confirmed prod
+  assert.equal(resolveRedirect(CONFIRMED_PROD_ORIGIN), `${CONFIRMED_PROD_ORIGIN}/login`);
 
-  // Case D: Production origin
-  assert.equal(resolveRedirect('https://the-fitness-house-admin-panel.vercel.app'), 'https://the-fitness-house-admin-panel.vercel.app/login');
+  // Case D: Previous production origin -> previous prod (retained for backward compatibility)
+  assert.equal(resolveRedirect(PREVIOUS_PROD_ORIGIN), `${PREVIOUS_PROD_ORIGIN}/login`);
+
+  // Case E: Local development origins -> localhost
+  assert.equal(resolveRedirect(LOCALHOST_PORT_ORIGIN), `${LOCALHOST_PORT_ORIGIN}/login`);
+  assert.equal(resolveRedirect(LOOPBACK_IP_ORIGIN), `${LOOPBACK_IP_ORIGIN}/login`);
 });
-

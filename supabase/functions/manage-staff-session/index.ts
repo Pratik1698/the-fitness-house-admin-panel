@@ -2,12 +2,13 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
 
 const ALLOWED_ORIGINS = new Set([
+  "https://the-fitness-house-admin-panel-696c.vercel.app",
   "https://the-fitness-house-admin-panel.vercel.app",
   "http://localhost:5173",
   "http://127.0.0.1:5173",
 ]);
 
-const PRODUCTION_FRONTEND_URL = "https://the-fitness-house-admin-panel.vercel.app";
+const PRODUCTION_FRONTEND_URL = "https://the-fitness-house-admin-panel-696c.vercel.app";
 
 function getCorsHeaders(requestOrigin: string | null): Record<string, string> {
   const isAllowed = requestOrigin && ALLOWED_ORIGINS.has(requestOrigin);
