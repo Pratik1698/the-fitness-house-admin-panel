@@ -51,9 +51,122 @@ BEGIN;
 -- 1. PROFILES ENHANCEMENT: ACCOUNT STATUS & INVITATION ATTRIBUTION
 -- ----------------------------------------------------------------------------
 ALTER TABLE public.profiles
-    ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT true,
-    ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ DEFAULT NULL,
-    ADD COLUMN IF NOT EXISTS invited_by UUID REFERENCES auth.users(id) ON DELETE SET NULL;
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN,
+    ADD COLUMN IF NOT EXISTS deactivated_at TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS invited_by UUID;
+
+-- Do not infer an existing account's activation state from the new-column default.
+-- A reviewed, complete mapping is required whenever existing profiles have no
+-- reliable activation value (including when this column is first introduced).
+DO $phase5_profile_activation_map$
+DECLARE
+    v_has_status_column boolean;
+    v_requires_mapping boolean := false;
+    v_profile_count bigint;
+    v_mapping_count bigint;
+BEGIN
+    SELECT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'profiles' AND column_name = 'is_active'
+    ) INTO v_has_status_column;
+
+    SELECT count(*) INTO v_profile_count FROM public.profiles;
+
+    IF v_profile_count > 0 THEN
+        IF NOT v_has_status_column THEN
+            v_requires_mapping := true;
+        ELSE
+            SELECT EXISTS (
+                SELECT 1 FROM public.profiles
+                WHERE is_active IS NULL OR (is_active IS TRUE AND deactivated_at IS NOT NULL)
+            ) INTO v_requires_mapping;
+        END IF;
+    END IF;
+
+    IF v_requires_mapping AND to_regclass('pg_temp.phase5_profile_activation_map') IS NULL THEN
+        RAISE EXCEPTION 'PHASE5_PROFILE_MAP_REQUIRED: Existing profiles lack a reconciled activation state. Create and populate pg_temp.phase5_profile_activation_map in this SQL session before running the forward migration.';
+    END IF;
+
+    IF to_regclass('pg_temp.phase5_profile_activation_map') IS NOT NULL THEN
+        IF NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('pg_temp.phase5_profile_activation_map') AND attname = 'profile_id' AND format_type(atttypid,atttypmod)='uuid' AND NOT attisdropped)
+           OR NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('pg_temp.phase5_profile_activation_map') AND attname = 'is_active' AND format_type(atttypid,atttypmod)='boolean' AND NOT attisdropped)
+           OR NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('pg_temp.phase5_profile_activation_map') AND attname = 'deactivated_at' AND format_type(atttypid,atttypmod)='timestamp with time zone' AND NOT attisdropped)
+           OR NOT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = to_regclass('pg_temp.phase5_profile_activation_map') AND attname = 'source_reference' AND format_type(atttypid,atttypmod)='text' AND NOT attisdropped) THEN
+            RAISE EXCEPTION 'PHASE5_PROFILE_MAP_INVALID: pg_temp.phase5_profile_activation_map must provide profile_id uuid, is_active boolean, deactivated_at timestamptz, and source_reference text columns.';
+        END IF;
+
+        IF EXISTS (
+            SELECT 1 FROM pg_temp.phase5_profile_activation_map
+            WHERE profile_id IS NULL OR is_active IS NULL OR source_reference IS NULL OR btrim(source_reference) = ''
+               OR (is_active IS TRUE AND deactivated_at IS NOT NULL)
+        ) THEN
+            RAISE EXCEPTION 'PHASE5_PROFILE_MAP_INVALID: Every mapped profile needs an explicit status and source reference; active profiles must not have deactivated_at set.';
+        END IF;
+
+        SELECT count(*) INTO v_mapping_count FROM pg_temp.phase5_profile_activation_map;
+        IF v_mapping_count <> v_profile_count
+           OR EXISTS (
+                SELECT 1 FROM public.profiles p
+                FULL JOIN pg_temp.phase5_profile_activation_map m ON m.profile_id = p.id
+                WHERE p.id IS NULL OR m.profile_id IS NULL
+           ) THEN
+            RAISE EXCEPTION 'PHASE5_PROFILE_MAP_INVALID: The mapping must contain exactly one row for every existing profile and no other profile IDs.';
+        END IF;
+    ELSIF EXISTS (
+        SELECT 1 FROM public.profiles
+        WHERE is_active IS NULL OR (is_active IS TRUE AND deactivated_at IS NOT NULL)
+    ) THEN
+        RAISE EXCEPTION 'PHASE5_PROFILE_MAP_REQUIRED: Existing profile activation fields are inconsistent and require an explicit mapping.';
+    END IF;
+
+    IF to_regclass('pg_temp.phase5_profile_activation_map') IS NOT NULL THEN
+        UPDATE public.profiles p
+        SET is_active = m.is_active,
+            deactivated_at = m.deactivated_at
+        FROM pg_temp.phase5_profile_activation_map m
+        WHERE m.profile_id = p.id;
+    END IF;
+END;
+$phase5_profile_activation_map$;
+
+ALTER TABLE public.profiles
+    ALTER COLUMN is_active SET DEFAULT true,
+    ALTER COLUMN is_active SET NOT NULL;
+
+-- An existing same-named constraint with a different target or delete action is unsafe.
+DO $phase5_profile_invited_by_fk$
+DECLARE
+    v_fk record;
+BEGIN
+    SELECT conname, pg_get_constraintdef(oid, true) AS definition
+    INTO v_fk
+    FROM pg_constraint
+    WHERE conrelid = 'public.profiles'::regclass
+      AND conname = 'profiles_invited_by_fkey';
+
+    IF FOUND AND v_fk.definition <> 'FOREIGN KEY (invited_by) REFERENCES auth.users(id) ON DELETE SET NULL' THEN
+        RAISE EXCEPTION 'PHASE5_SCHEMA_MISMATCH: profiles_invited_by_fkey has an unexpected definition: %.', v_fk.definition;
+    ELSIF NOT FOUND THEN
+        IF EXISTS (
+            SELECT 1 FROM pg_constraint c
+            WHERE c.conrelid = 'public.profiles'::regclass AND c.contype = 'f'
+              AND c.conkey = ARRAY[(SELECT attnum FROM pg_attribute WHERE attrelid = 'public.profiles'::regclass AND attname = 'invited_by')]::smallint[]
+        ) THEN
+            RAISE EXCEPTION 'PHASE5_SCHEMA_MISMATCH: public.profiles.invited_by already has a differently named foreign key.';
+        END IF;
+        IF EXISTS (
+            SELECT 1 FROM public.profiles p
+            LEFT JOIN auth.users u ON u.id = p.invited_by
+            WHERE p.invited_by IS NOT NULL AND u.id IS NULL
+        ) THEN
+            RAISE EXCEPTION 'PHASE5_SCHEMA_MISMATCH: Existing profiles.invited_by values do not all reference auth.users.';
+        END IF;
+        ALTER TABLE public.profiles
+            ADD CONSTRAINT profiles_invited_by_fkey FOREIGN KEY (invited_by)
+            REFERENCES auth.users(id) ON DELETE SET NULL;
+    END IF;
+END;
+$phase5_profile_invited_by_fk$;
 
 COMMENT ON COLUMN public.profiles.is_active IS 'Active status of gym staff/admin. Inactive accounts are immediately rejected across all auth and RLS gates.';
 COMMENT ON COLUMN public.profiles.deactivated_at IS 'Timestamp when the account was deactivated by an administrator.';
@@ -176,16 +289,14 @@ $$;
 -- ----------------------------------------------------------------------------
 -- 5. SANITIZED STAFF ROSTER VIEW
 -- ----------------------------------------------------------------------------
-DROP VIEW IF EXISTS public.v_staff_roster CASCADE;
-
-CREATE OR REPLACE VIEW public.v_staff_roster WITH (security_invoker = false) AS
+CREATE OR REPLACE VIEW public.v_staff_roster WITH (security_invoker = false, security_barrier = true) AS
 SELECT
     id,
     full_name,
     role,
+    created_at,
     is_active,
-    deactivated_at,
-    created_at
+    deactivated_at
 FROM public.profiles
 WHERE public.is_staff();
 
@@ -1593,9 +1704,7 @@ $$;
 -- 12. FINANCIAL ISOLATION & DATA ACCESS VIEWS
 -- ----------------------------------------------------------------------------
 -- A. v_active_members: Masks all financial fields for non-admin callers
-DROP VIEW IF EXISTS public.v_active_members CASCADE;
-
-CREATE OR REPLACE VIEW public.v_active_members WITH (security_invoker = false) AS
+CREATE OR REPLACE VIEW public.v_active_members WITH (security_invoker = false, security_barrier = true) AS
 SELECT
     m.id,
     m.member_code,
@@ -1607,10 +1716,10 @@ SELECT
     m.is_archived,
     s.id AS current_subscription_id,
     s.plan_name,
-    CASE WHEN public.is_admin() THEN s.plan_price ELSE NULL END AS plan_price,
-    CASE WHEN public.is_admin() THEN s.total_liability ELSE NULL END AS total_liability,
-    CASE WHEN public.is_admin() THEN s.amount_paid ELSE NULL END AS amount_paid,
-    CASE WHEN public.is_admin() THEN s.balance ELSE NULL END AS balance,
+    (CASE WHEN public.is_admin() THEN s.plan_price ELSE NULL END)::numeric(12, 2) AS plan_price,
+    (CASE WHEN public.is_admin() THEN s.total_liability ELSE NULL END)::numeric(12, 2) AS total_liability,
+    (CASE WHEN public.is_admin() THEN s.amount_paid ELSE NULL END)::numeric(12, 2) AS amount_paid,
+    (CASE WHEN public.is_admin() THEN s.balance ELSE NULL END)::numeric(12, 2) AS balance,
     CASE WHEN public.is_admin() THEN s.payment_status ELSE NULL END AS payment_status,
     s.start_date,
     s.expiry_date,
@@ -1629,10 +1738,7 @@ WHERE m.is_archived = false
 COMMENT ON VIEW public.v_active_members IS 'Active members directory view: excludes archived members, masks sensitive financial fields (plan_price, total_liability, amount_paid, balance, payment_status) for non-admin callers, and permits access only to authenticated active staff and administrators.';
 
 -- B. v_member_dues & v_outstanding_payments: Financial views return 0 rows for non-admins
-DROP VIEW IF EXISTS public.v_outstanding_payments CASCADE;
-DROP VIEW IF EXISTS public.v_member_dues CASCADE;
-
-CREATE OR REPLACE VIEW public.v_member_dues WITH (security_invoker = false) AS
+CREATE OR REPLACE VIEW public.v_member_dues WITH (security_invoker = false, security_barrier = true) AS
 SELECT
     m.id AS member_id,
     m.member_code,
@@ -1662,7 +1768,7 @@ WHERE m.is_archived = false
 
 COMMENT ON VIEW public.v_member_dues IS 'Active member dues statuses (unpaid, partial, paid): authoritative financial ledger view restricted to active administrators. Returns 0 rows for non-admin staff.';
 
-CREATE OR REPLACE VIEW public.v_outstanding_payments WITH (security_invoker = false) AS
+CREATE OR REPLACE VIEW public.v_outstanding_payments WITH (security_invoker = false, security_barrier = true) AS
 SELECT *
 FROM public.v_member_dues
 WHERE outstanding_balance > 0.00
@@ -1671,9 +1777,7 @@ WHERE outstanding_balance > 0.00
 COMMENT ON VIEW public.v_outstanding_payments IS 'Outstanding member balances view: filters v_member_dues where outstanding_balance > 0. Restricted to active administrators; returns 0 rows for non-admin staff.';
 
 -- C. v_notifications: Masks current_balance for non-admin callers
-DROP VIEW IF EXISTS public.v_notifications CASCADE;
-
-CREATE OR REPLACE VIEW public.v_notifications WITH (security_invoker = false) AS
+CREATE OR REPLACE VIEW public.v_notifications WITH (security_invoker = false, security_barrier = true) AS
 SELECT
     n.id,
     n.member_id,
@@ -1823,6 +1927,13 @@ CREATE POLICY "pt_assignments_update_staff" ON public.pt_assignments
 ALTER TABLE public.pt_sessions ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "pt_sessions_select" ON public.pt_sessions;
 CREATE POLICY "pt_sessions_select" ON public.pt_sessions
+    FOR SELECT TO authenticated
+    USING (public.is_staff());
+
+-- Trainer records are operational data and inactive accounts must not retain access.
+ALTER TABLE public.trainers ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "trainers_select" ON public.trainers;
+CREATE POLICY "trainers_select" ON public.trainers
     FOR SELECT TO authenticated
     USING (public.is_staff());
 
