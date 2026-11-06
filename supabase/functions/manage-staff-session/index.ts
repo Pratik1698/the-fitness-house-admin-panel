@@ -1,10 +1,26 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.8";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-};
+const ALLOWED_ORIGINS = new Set([
+  "https://the-fitness-house-admin-panel.vercel.app",
+  "http://localhost:5173",
+  "http://127.0.0.1:5173",
+]);
+
+const PRODUCTION_FRONTEND_URL = "https://the-fitness-house-admin-panel.vercel.app";
+
+function getCorsHeaders(requestOrigin: string | null): Record<string, string> {
+  const isAllowed = requestOrigin && ALLOWED_ORIGINS.has(requestOrigin);
+  const originHeader = isAllowed
+    ? requestOrigin
+    : PRODUCTION_FRONTEND_URL;
+  return {
+    "Access-Control-Allow-Origin": originHeader,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Vary": "Origin",
+  };
+}
 
 interface ManageSessionPayload {
   targetUserId: string;
@@ -12,6 +28,24 @@ interface ManageSessionPayload {
 }
 
 serve(async (req: Request) => {
+  const requestOrigin = req.headers.get("origin");
+
+  // Reject unapproved browser origins immediately
+  if (requestOrigin && !ALLOWED_ORIGINS.has(requestOrigin)) {
+    return new Response(
+      JSON.stringify({ error: "Forbidden: Origin not allowed by CORS policy." }),
+      {
+        status: 403,
+        headers: {
+          "Content-Type": "application/json",
+          "Vary": "Origin",
+        },
+      }
+    );
+  }
+
+  const corsHeaders = getCorsHeaders(requestOrigin);
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
