@@ -121,11 +121,19 @@ export default function CheckIns() {
   const handleCheckin = async () => {
     if (!selectedMember || submitting) return;
 
-    // 1. Expired Member Guard
+    // 1. Expired or Ineligible Member Guard
     if (selectedStatus === 'expired') {
       setFeedback({
         type: 'error',
         message: `Check-in blocked: ${selectedMember.name}'s membership expired on ${selectedMember.expiryDate}. Renewal required.`,
+      });
+      return;
+    }
+
+    if (selectedStatus === 'cancelled' || selectedMember.status === 'cancelled') {
+      setFeedback({
+        type: 'error',
+        message: `Check-in blocked: ${selectedMember.name}'s membership has been cancelled. Plan renewal required.`,
       });
       return;
     }
@@ -508,6 +516,20 @@ export default function CheckIns() {
                   <div className="p-3 rounded-xl bg-[#FCE9E9] border border-[#B42318]/25 text-xs text-[#B42318] flex items-center gap-2">
                     <XCircle size={16} className="shrink-0" />
                     <span>Membership has expired. Check-in is blocked until renewed.</span>
+                  </div>
+                  <Button
+                    className="w-full"
+                    icon={RotateCw}
+                    onClick={() => navigate(`/members/${selectedMember.id}?renew=true`)}
+                  >
+                    Renew Membership First
+                  </Button>
+                </div>
+              ) : selectedStatus === 'cancelled' || selectedMember?.status === 'cancelled' ? (
+                <div className="space-y-2">
+                  <div className="p-3 rounded-xl bg-[#FCE9E9] border border-[#B42318]/25 text-xs text-[#B42318] flex items-center gap-2">
+                    <XCircle size={16} className="shrink-0" />
+                    <span>Membership has been cancelled. Check-in is blocked until renewed.</span>
                   </div>
                   <Button
                     className="w-full"

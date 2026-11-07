@@ -75,7 +75,10 @@ export function getDaysDifference(targetDateStr, baseDateStr = getLocalDateStrin
  * - Otherwise, an unexpired membership is 'active'.
  */
 export function getMembershipStatus(member, todayStr = getLocalDateString()) {
-  if (!member || !member.expiryDate) return 'expired';
+  if (!member) return 'expired';
+  if (member.status === 'cancelled') return 'cancelled';
+  if (member.status === 'superseded') return 'superseded';
+  if (!member.expiryDate) return 'expired';
   const daysLeft = getDaysDifference(member.expiryDate, todayStr);
   if (daysLeft < 0) {
     return 'expired';
