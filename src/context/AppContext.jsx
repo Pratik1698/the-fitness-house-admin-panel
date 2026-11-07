@@ -1560,6 +1560,65 @@ export function AppProvider({ children }) {
   }, [session, ptClients, ptSessions, fetchPtData]);
 
   /**
+   * Updates a session's status with consistent session count tracking (fallback & in-memory)
+   */
+  const updatePtSessionStatus = useCallback((sessionId, newStatus, notesUpdate = null) => {
+    const session = ptSessions.find(s => s.id === sessionId);
+    if (!session) return;
+    const oldStatus = session.status;
+    if (oldStatus === newStatus && !notesUpdate) return;
+
+    // Update Session
+    setPtSessions(prev => prev.map(s => {
+      if (s.id === sessionId) {
+        return {
+          ...s,
+          status: newStatus,
+          notes: notesUpdate !== null ? notesUpdate : s.notes,
+        };
+      }
+      return s;
+    }));
+
+    // Update Client session counts
+    if (session.memberId) {
+      // 1. Moving to completed (from non-completed)
+      if (newStatus === 'completed' && oldStatus !== 'completed') {
+        setPtClients(prev => prev.map(c => {
+          if (c.memberId === session.memberId) {
+            if (Number(c.remainingSessions) <= 0) return c;
+            const completed = (Number(c.completedSessions) || 0) + 1;
+            const remaining = Math.max(0, (Number(c.remainingSessions) || 0) - 1);
+            return {
+              ...c,
+              completedSessions: completed,
+              remainingSessions: remaining,
+              status: remaining === 0 ? 'completed' : c.status,
+            };
+          }
+          return c;
+        }));
+      }
+      // 2. Moving away from completed (reversal)
+      else if (oldStatus === 'completed' && newStatus !== 'completed') {
+        setPtClients(prev => prev.map(c => {
+          if (c.memberId === session.memberId) {
+            const completed = Math.max(0, (Number(c.completedSessions) || 0) - 1);
+            const remaining = (Number(c.remainingSessions) || 0) + 1;
+            return {
+              ...c,
+              completedSessions: completed,
+              remainingSessions: remaining,
+              status: remaining > 0 ? 'active' : c.status,
+            };
+          }
+          return c;
+        }));
+      }
+    }
+  }, [ptSessions]);
+
+  /**
    * Completes a scheduled PT session with atomic Supabase persistence and credit deduction
    */
   const completePtSession = useCallback(async (sessionId, notes = null) => {

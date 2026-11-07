@@ -237,7 +237,11 @@ export default function Login() {
         setResendMessage(result.error?.message || 'Failed to resend verification email. Please try again shortly.');
       } else {
         setResendStatus('sent');
-        setResendMessage('Verification email sent! Check your inbox or local Mailpit at http://127.0.0.1:54324.');
+        setResendMessage(
+          result.message || (import.meta.env.DEV
+            ? 'Verification email sent! Check your inbox or local Mailpit at http://127.0.0.1:54324.'
+            : 'Verification email sent! Please check your inbox for the confirmation link.')
+        );
         setResendCooldown(60); // 60-second cooldown
       }
     } catch (err) {
@@ -429,6 +433,7 @@ export default function Login() {
                       onClick={() => setShowPassword(!showPassword)}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-[#64717B] hover:text-[#25313B] p-1 cursor-pointer transition-colors"
                       aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      title={showPassword ? 'Hide password' : 'Show password'}
                     >
                       {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                     </button>
@@ -437,9 +442,10 @@ export default function Login() {
 
                 {/* Custom Styled Checkbox */}
                 <div className="flex items-center justify-between pt-1">
-                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                  <label htmlFor="remember-me" className="flex items-center gap-2.5 cursor-pointer select-none">
                     <div className="relative flex items-center">
                       <input
+                        id="remember-me"
                         type="checkbox"
                         checked={rememberMe}
                         onChange={(e) => setRememberMe(e.target.checked)}
@@ -516,9 +522,11 @@ export default function Login() {
                       <CheckCircle size={16} /> Instructions Dispatched
                     </div>
                     <p className="text-[#25313B]">{resetSuccessMessage}</p>
-                    <p className="text-[11px] text-[#64717B] pt-1 border-t border-[#16845B]/10">
-                      Local Testing: Open Mailpit at <a href="http://127.0.0.1:54324" target="_blank" rel="noreferrer" className="text-[#16845B] underline font-medium">http://127.0.0.1:54324</a> to view your recovery link.
-                    </p>
+                    {import.meta.env.DEV && (
+                      <p className="text-[11px] text-[#64717B] pt-1 border-t border-[#16845B]/10">
+                        Local Testing: Open Mailpit at <a href="http://127.0.0.1:54324" target="_blank" rel="noreferrer" className="text-[#16845B] underline font-medium">http://127.0.0.1:54324</a> to view your recovery link.
+                      </p>
+                    )}
                   </div>
 
                   <Button

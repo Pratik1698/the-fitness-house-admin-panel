@@ -1,3 +1,8 @@
+// Ensure import.meta.env is safe in Node environments without Vite
+if (typeof import.meta !== 'undefined' && !import.meta.env) {
+  import.meta.env = {};
+}
+
 import { supabase, isSupabaseConfigured } from './supabaseClient.js';
 
 let activeClient = supabase;
@@ -577,9 +582,13 @@ export async function resendVerificationEmail(email) {
       };
     }
 
+    const successMessage = import.meta.env.DEV
+      ? 'Verification email sent! Check your inbox or local Mailpit at http://127.0.0.1:54324.'
+      : 'Verification email sent! Please check your inbox for the confirmation link.';
+
     return {
       success: true,
-      message: 'Verification email sent! Check your inbox or local Mailpit at http://127.0.0.1:54324.',
+      message: successMessage,
       error: null,
     };
   } catch (err) {

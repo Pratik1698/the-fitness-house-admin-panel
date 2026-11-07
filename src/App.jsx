@@ -62,7 +62,11 @@ function EmailVerificationNotice() {
     try {
       const res = await resendVerificationEmail(user.email);
       if (res.success) {
-        setResendSuccess('Verification email sent! Check your inbox or local Mailpit at http://127.0.0.1:54324.');
+        setResendSuccess(
+          res.message || (import.meta.env.DEV
+            ? 'Verification email sent! Check your inbox or local Mailpit at http://127.0.0.1:54324.'
+            : 'Verification email sent! Please check your inbox for the confirmation link.')
+        );
         setCooldown(60);
       } else {
         setResendError(res.error?.message || 'Failed to resend verification email.');
@@ -104,10 +108,12 @@ function EmailVerificationNotice() {
           </div>
         )}
 
-        <div className="p-3 bg-[#F5F7F8] rounded-xl border border-[#E1E6E9] text-[11px] text-[#64717B] text-left">
-          <span className="font-semibold text-[#25313B] block mb-0.5">Local Development:</span>
-          Open Mailpit at <a href="http://127.0.0.1:54324" target="_blank" rel="noreferrer" className="text-[#16845B] font-semibold underline">http://127.0.0.1:54324</a> to view your verification email and click the confirmation link.
-        </div>
+        {import.meta.env.DEV && (
+          <div className="p-3 bg-[#F5F7F8] rounded-xl border border-[#E1E6E9] text-[11px] text-[#64717B] text-left">
+            <span className="font-semibold text-[#25313B] block mb-0.5">Local Development:</span>
+            Open Mailpit at <a href="http://127.0.0.1:54324" target="_blank" rel="noreferrer" className="text-[#16845B] font-semibold underline">http://127.0.0.1:54324</a> to view your verification email and click the confirmation link.
+          </div>
+        )}
 
         <div className="pt-2 flex flex-col gap-2">
           <Button

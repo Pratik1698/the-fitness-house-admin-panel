@@ -14,7 +14,7 @@ import {
 
 export default function Attention() {
   const navigate = useNavigate();
-  const { members, ptClients, followups } = useApp();
+  const { members, ptClients, followups, isAdmin } = useApp();
 
   const todayStr = useMemo(() => getLocalDateString(), []);
 
@@ -30,7 +30,22 @@ export default function Attention() {
     return members
       .map(m => ({ ...m, cls: getExpiryClassification(m, todayStr) }))
       .filter(m => m.cls.tier === 'expired')
-      .sort((a, b) => new Date(b.expiryDate) - new Date(a.expiryDate));
+      .sort((a, b) => {
+        const timeA = a.expiryDate ? new Date(a.expiryDate).getTime() : NaN;
+        const timeB = b.expiryDate ? new Date(b.expiryDate).getTime() : NaN;
+        const validA = !Number.isNaN(timeA);
+        const validB = !Number.isNaN(timeB);
+
+        // If both are valid dates, sort descending (most recently expired first)
+        if (validA && validB) {
+          return timeB - timeA;
+        }
+        // Place valid dates before missing/invalid dates
+        if (validA && !validB) return -1;
+        if (!validA && validB) return 1;
+        // Both are missing or invalid: preserve deterministic stability
+        return 0;
+      });
   }, [members, todayStr]);
 
   const pendingPayments = useMemo(() => {
@@ -48,14 +63,14 @@ export default function Attention() {
   const followupsDue = useMemo(() => {
     const validMemberIds = new Set(members.map(m => m.id));
     return followups
-      .filter(f => f.status !== 'completed' && (validMemberIds.size === 0 || validMemberIds.has(f.memberId)))
+      .filter(f => f.status !== 'completed' && f.status !== 'cancelled' && (validMemberIds.size === 0 || validMemberIds.has(f.memberId)))
       .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
   }, [followups, members]);
 
   const totalActionItems =
     expiringMembers.length +
     expiredMembers.length +
-    pendingPayments.length +
+    (isAdmin ? pendingPayments.length : 0) +
     ptEnding.length +
     followupsDue.length;
 
@@ -131,41 +146,46 @@ export default function Attention() {
       content: (
         <div className="space-y-2">
           {expiredMembers.length > 0 ? (
-            expiredMembers.map(m => (
-              <div
-                key={m.id}
-                className="flex items-center justify-between p-3.5 rounded-xl border border-[#B42318]/20 bg-[#FCE9E9]/40"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#B42318] text-white flex items-center justify-center text-xs font-bold">
-                    EXP
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => navigate(`/members/${m.id}`)}
-                        className="text-sm font-semibold text-[#25313B] hover:text-[#16845B] cursor-pointer"
-                      >
-                        {m.name}
-                      </button>
-                      <span className="text-xs font-mono text-[#64717B]">({m.id})</span>
-                    </div>
-                    <p className="text-xs text-[#B42318] font-medium mt-0.5">
-                      {m.cls.label} ({m.plan}) • Expired on {m.expiryDate}
-                    </p>
-                  </div>
-                </div>
-
-                <Button
-                  size="sm"
-                  icon={RotateCw}
-                  onClick={() => navigate(`/members/${m.id}?renew=true`)}
-                  className="text-xs h-8"
+            expiredMembers.map(m => {
+              const displayDate = m.expiryDate && !Number.isNaN(new Date(m.expiryDate).getTime())
+                ? m.expiryDate
+                : 'N/A';
+              return (
+                <div
+                  key={m.id}
+                  className="flex items-center justify-between p-3.5 rounded-xl border border-[#B42318]/20 bg-[#FCE9E9]/40"
                 >
-                  Renew
-                </Button>
-              </div>
-            ))
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-[#B42318] text-white flex items-center justify-center text-xs font-bold">
+                      EXP
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => navigate(`/members/${m.id}`)}
+                          className="text-sm font-semibold text-[#25313B] hover:text-[#16845B] cursor-pointer"
+                        >
+                          {m.name}
+                        </button>
+                        <span className="text-xs font-mono text-[#64717B]">({m.id})</span>
+                      </div>
+                      <p className="text-xs text-[#B42318] font-medium mt-0.5">
+                        {m.cls.label} ({m.plan}) • Expired on {displayDate}
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button
+                    size="sm"
+                    icon={RotateCw}
+                    onClick={() => navigate(`/members/${m.id}?renew=true`)}
+                    className="text-xs h-8"
+                  >
+                    Renew
+                  </Button>
+                </div>
+              );
+            })
           ) : (
             <p className="text-sm text-[#64717B] py-8 text-center">No expired memberships.</p>
           )}
@@ -175,10 +195,20 @@ export default function Attention() {
     {
       id: 'payments',
       label: 'Pending Dues',
-      count: pendingPayments.length,
+      count: isAdmin ? pendingPayments.length : '—',
       content: (
         <div className="space-y-2">
-          {pendingPayments.length > 0 ? (
+          {!isAdmin ? (
+            <div className="py-8 text-center space-y-2">
+              <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-[#FFF2D8] text-[#A66A00] mb-1">
+                <CreditCard size={20} />
+              </div>
+              <p className="text-sm font-semibold text-[#25313B]">Financial Access Restricted</p>
+              <p className="text-xs text-[#64717B] max-w-sm mx-auto">
+                Member liability and dues balances are restricted to administrators. Contact an administrator to review outstanding payments.
+              </p>
+            </div>
+          ) : pendingPayments.length > 0 ? (
             pendingPayments.map(m => (
               <div
                 key={m.id}
@@ -336,7 +366,7 @@ export default function Attention() {
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
         <SummaryCard icon={Clock} label="Expiring" count={expiringMembers.length} color="warning" />
         <SummaryCard icon={XCircle} label="Expired" count={expiredMembers.length} color="error" />
-        <SummaryCard icon={CreditCard} label="Pending Dues" count={pendingPayments.length} color="warning" />
+        <SummaryCard icon={CreditCard} label="Pending Dues" count={isAdmin ? pendingPayments.length : '—'} color="warning" />
         <SummaryCard icon={Dumbbell} label="PT Ending" count={ptEnding.length} color="default" />
         <SummaryCard icon={PhoneCall} label="Follow-ups" count={followupsDue.length} color="default" />
       </div>
