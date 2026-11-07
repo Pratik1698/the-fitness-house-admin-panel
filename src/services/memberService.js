@@ -1,4 +1,25 @@
-import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { supabase, isSupabaseConfigured } from './supabaseClient.js';
+
+let _injectedClient = null;
+let _injectedConfigured = null;
+
+export function setSupabaseClientForTesting(client, configured = true) {
+  _injectedClient = client;
+  _injectedConfigured = configured;
+}
+
+export function resetSupabaseClientForTesting() {
+  _injectedClient = null;
+  _injectedConfigured = null;
+}
+
+function getActiveClient() {
+  return _injectedClient || supabase;
+}
+
+function getIsConfigured() {
+  return _injectedConfigured !== null ? _injectedConfigured : isSupabaseConfigured;
+}
 
 /**
  * Member Service
@@ -31,7 +52,7 @@ import { supabase, isSupabaseConfigured } from './supabaseClient';
  * @returns {Promise<{ data: object|null, error: Error|null, idempotencyKey: string }>}
  */
 export async function onboardMember(payload) {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured. Please check your environment configuration.'),
@@ -64,7 +85,7 @@ export async function onboardMember(payload) {
   };
 
   try {
-    const { data, error } = await supabase.rpc('onboard_member', rpcParams);
+    const { data, error } = await getActiveClient().rpc('onboard_member', rpcParams);
 
     if (error) {
       console.error('[memberService.onboardMember] RPC Error:', error);
@@ -112,7 +133,7 @@ export async function onboardMember(payload) {
  * @returns {Promise<{ data: Array<object>|null, error: Error|null }>}
  */
 export async function getActiveMembers() {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured. Please check your environment configuration.'),
@@ -120,7 +141,7 @@ export async function getActiveMembers() {
   }
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getActiveClient()
       .from('v_active_members')
       .select('*')
       .order('member_code', { ascending: true });
@@ -183,7 +204,7 @@ export async function getActiveMembers() {
  * @returns {Promise<{ data: object|null, error: Error|null, idempotencyKey: string }>}
  */
 export async function renewMemberSubscription(payload) {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured. Please check your environment configuration.'),
@@ -210,7 +231,7 @@ export async function renewMemberSubscription(payload) {
   };
 
   try {
-    const { data, error } = await supabase.rpc('renew_member_subscription', rpcParams);
+    const { data, error } = await getActiveClient().rpc('renew_member_subscription', rpcParams);
 
     if (error) {
       console.error('[memberService.renewMemberSubscription] RPC Error:', error);

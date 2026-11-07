@@ -438,6 +438,14 @@ COMMIT;`);
     runExpectedFailure(`BEGIN; ${adminSet} SELECT public.renew_member_subscription('${ids.member}'::uuid,'${ids.plan}'::uuid,current_date+1,true,0,'Cash','${keys.renewal}'); COMMIT;`, 'ERR_IDEMPOTENCY_PAYLOAD_MISMATCH');
     runExpectedFailure(`BEGIN; ${adminSet} SELECT public.renew_member_subscription('${ids.member}'::uuid,'${ids.plan}'::uuid,current_date,true,0,'Cash',''); COMMIT;`, 'Idempotency key is required');
 
+    // Fully paid renewal: prior subscription has balance = 0.00; must transition to 'superseded', not violate status check
+    const fullyPaidRenewalKey = `p5-renewal-paid-${ids.admin}`;
+    const payoffKey = `p5-payoff-${ids.admin}`;
+    runOk(`BEGIN; ${adminSet} SELECT public.record_dues_payment('${ids.member}'::uuid,'${renewal.subscription_id}'::uuid,${renewal.balance},'Cash','pay off dues','${payoffKey}'); COMMIT;`);
+    const paidRenewalResult = JSON.parse(runOk(`BEGIN; ${adminSet} SELECT public.renew_member_subscription('${ids.member}'::uuid,'${ids.plan}'::uuid,current_date+30,false,1000,'Cash','${fullyPaidRenewalKey}'); COMMIT;`));
+    assert.ok(paidRenewalResult.subscription_id, 'Fully paid renewal succeeds without constraint violation');
+    assert.equal(runOk(`SELECT status FROM public.member_subscriptions WHERE id='${renewal.subscription_id}'::uuid;`), 'superseded');
+
     const failedAttempt = runOk(`BEGIN; ${adminSet} SELECT public.record_dues_payment('${ids.member}'::uuid,'${ids.subscription}'::uuid,75,'Cash','rollback then retry','${keys.retry}'); ROLLBACK;`);
     assert.equal(jsonRows(failedAttempt).length, 1);
     assert.equal(runOk(`SELECT count(*) FROM public.idempotency_keys WHERE actor_id='${ids.admin}'::uuid AND idempotency_key='${keys.retry}';`), '0');
