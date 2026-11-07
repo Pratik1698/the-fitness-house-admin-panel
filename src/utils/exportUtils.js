@@ -3,21 +3,39 @@
  * The Fitness House Gym Management Admin Panel
  */
 
+import { getMembershipStatus, getLocalDateString } from './memberUtils.js';
+
 /**
- * Escapes a cell value for standard CSV formatting.
+ * Escapes a cell value for standard CSV formatting (RFC 4180).
  * Handles commas, double-quotes, and newlines.
+ * Formats null/undefined as clean empty strings.
  */
-function escapeCSVCell(value) {
-  if (value === null || value === undefined) return '""';
+export function escapeCSVCell(value) {
+  if (value === null || value === undefined) return '';
   const str = String(value);
   if (str.includes('"') || str.includes(',') || str.includes('\n') || str.includes('\r')) {
     return `"${str.replace(/"/g, '""')}"`;
   }
-  return `"${str}"`;
+  return str;
+}
+
+/**
+ * Normalizes date value to standard YYYY-MM-DD string.
+ */
+function formatDate(val) {
+  if (!val) return '';
+  const str = String(val).trim();
+  if (!str || str === 'null' || str === 'undefined') return '';
+  if (str.length >= 10 && /^\d{4}-\d{2}-\d{2}/.test(str)) {
+    return str.slice(0, 10);
+  }
+  return str;
 }
 
 /**
  * Triggers a native browser file download for a given CSV string.
+ * Appends UTF-8 BOM (\uFEFF) for Microsoft Excel compatibility.
+ * Safely deallocates the object URL asynchronously to avoid premature cancellation.
  */
 export function downloadCSV(filename, headers, rows) {
   const csvContent = [
@@ -25,15 +43,124 @@ export function downloadCSV(filename, headers, rows) {
     ...rows.map(row => row.map(escapeCSVCell).join(','))
   ].join('\r\n');
 
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', filename.endsWith('.csv') ? filename : `${filename}.csv`);
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
-  URL.revokeObjectURL(url);
+  // Prepend UTF-8 BOM (\uFEFF) for Microsoft Excel compatibility
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+  const actualFilename = filename.endsWith('.csv') ? filename : `${filename}.csv`;
+
+  if (typeof document !== 'undefined') {
+    const createUrl = (typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function')
+      ? URL.createObjectURL
+      : (typeof window !== 'undefined' && window.URL && typeof window.URL.createObjectURL === 'function')
+        ? window.URL.createObjectURL
+        : null;
+
+    if (createUrl) {
+      const url = createUrl(blob);
+      const link = document.createElement('a');
+      link.setAttribute('href', url);
+      link.setAttribute('download', actualFilename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => {
+        const revokeUrl = (typeof URL !== 'undefined' && typeof URL.revokeObjectURL === 'function')
+          ? URL.revokeObjectURL
+          : (typeof window !== 'undefined' && window.URL && typeof window.URL.revokeObjectURL === 'function')
+            ? window.URL.revokeObjectURL
+            : null;
+        if (revokeUrl) revokeUrl(url);
+      }, 1000);
+    }
+  }
+
+  return { csvContent, blob, filename: actualFilename };
+}
+
+/**
+ * 14 Canonical CSV Headers for Member Roster Export
+ */
+export const MEMBERS_CSV_HEADERS = [
+  'Member ID',
+  'Full Name',
+  'Phone Number',
+  'Email',
+  'Gender',
+  'Date of Birth',
+  'Address',
+  'Membership Plan',
+  'Start Date',
+  'Expiry Date',
+  'Total Fee',
+  'Amount Paid',
+  'Outstanding Balance',
+  'Membership Status'
+];
+
+/**
+ * Maps a single member record to the canonical 14-column CSV array.
+ */
+export function mapMemberToCSVRow(member, todayStr = getLocalDateString()) {
+  if (!member) return [];
+
+  const rawTotal = Number(member.totalFee ?? member.total_liability ?? member.plan_price ?? 0);
+  const rawPaid = Number(member.amountPaid ?? member.amount_paid ?? 0);
+  const rawBalance = Number(member.balance ?? 0);
+
+  let status = member.status || 'active';
+  if (status !== 'cancelled' && status !== 'superseded') {
+    if (member.expiryDate) {
+      status = getMembershipStatus(member, todayStr);
+    }
+  }
+
+  return [
+    member.member_code || member.memberCode || member.id || '',
+    member.name || member.fullName || '',
+    member.phone || member.phoneNumber || '',
+    member.email || '',
+    member.gender || '',
+    formatDate(member.dob || member.dateOfBirth),
+    member.address || '',
+    member.plan || member.plan_name || member.planName || '',
+    formatDate(member.startDate || member.start_date || member.joinDate),
+    formatDate(member.expiryDate || member.expiry_date),
+    isNaN(rawTotal) ? 0 : rawTotal,
+    isNaN(rawPaid) ? 0 : rawPaid,
+    isNaN(rawBalance) ? 0 : rawBalance,
+    status
+  ];
+}
+
+/**
+ * Generates raw CSV content string for a list of members.
+ */
+export function generateMembersCSV(members = [], todayStr = getLocalDateString()) {
+  const rows = (members || []).map(m => mapMemberToCSVRow(m, todayStr));
+  return [
+    MEMBERS_CSV_HEADERS.map(escapeCSVCell).join(','),
+    ...rows.map(row => row.map(escapeCSVCell).join(','))
+  ].join('\r\n');
+}
+
+/**
+ * Exports gym members to CSV and triggers browser file download.
+ */
+export function exportMembersCSV(members = [], filename, todayStr = getLocalDateString()) {
+  const actualFilename = filename || `fitness-house-members-${todayStr}.csv`;
+  const list = Array.isArray(members) ? members : [];
+  if (list.length === 0) {
+    return { success: false, count: 0, filename: actualFilename, message: 'No records to export' };
+  }
+
+  const rows = list.map(m => mapMemberToCSVRow(m, todayStr));
+  const result = downloadCSV(actualFilename, MEMBERS_CSV_HEADERS, rows);
+
+  return {
+    success: true,
+    count: list.length,
+    filename: actualFilename.endsWith('.csv') ? actualFilename : `${actualFilename}.csv`,
+    csvContent: result?.csvContent
+  };
 }
 
 /**

@@ -17,6 +17,7 @@ import {
   isValidIndianPhone,
   isValidEmail,
 } from '../utils/memberUtils';
+import { exportMembersCSV } from '../utils/exportUtils';
 import {
   Plus, Eye, IndianRupee, RotateCw, ChevronLeft, ChevronRight,
   Download, Users, CheckCircle2, User, Phone, Mail, MapPin, AlertCircle
@@ -45,6 +46,7 @@ export default function Members() {
   const [page, setPage] = useState(1);
   const [showAddModal, setShowAddModal] = useState(false);
   const [successToast, setSuccessToast] = useState(null);
+  const [exportNotice, setExportNotice] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const perPage = 8;
 
@@ -251,6 +253,36 @@ export default function Members() {
     }
   };
 
+  const handleExportRoster = () => {
+    if (!members || members.length === 0) {
+      setExportNotice({
+        type: 'warning',
+        message: 'No member records available to export.',
+      });
+      setTimeout(() => setExportNotice(null), 5000);
+      return;
+    }
+
+    if (filtered.length === 0) {
+      setExportNotice({
+        type: 'warning',
+        message: 'No members match the current filters to export.',
+      });
+      setTimeout(() => setExportNotice(null), 5000);
+      return;
+    }
+
+    const filename = `fitness-house-members-${todayStr}.csv`;
+    exportMembersCSV(filtered, filename, todayStr);
+
+    const count = filtered.length;
+    setExportNotice({
+      type: 'success',
+      message: `Exported ${count} member ${count === 1 ? 'record' : 'records'} to CSV.`,
+    });
+    setTimeout(() => setExportNotice(null), 5000);
+  };
+
   return (
     <div className="space-y-6">
       {/* Page Header */}
@@ -278,7 +310,8 @@ export default function Members() {
               variant="secondary"
               size="md"
               icon={Download}
-              onClick={() => alert(`Exporting ${members.length} member records to CSV.`)}
+              onClick={handleExportRoster}
+              title="Export filtered member roster to CSV"
             >
               Export Roster
             </Button>
@@ -325,6 +358,39 @@ export default function Members() {
             <span>{successToast}</span>
           </div>
           <button onClick={() => setSuccessToast(null)} className="text-[#16845B] hover:text-[#126b49] cursor-pointer">
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Export Notification */}
+      {exportNotice && (
+        <div
+          role="status"
+          aria-live="polite"
+          className={`p-3.5 rounded-xl text-xs font-semibold flex items-center justify-between gap-2 shadow-xs transition-all ${
+            exportNotice.type === 'warning'
+              ? 'bg-[#FFFAEB] border border-[#FEDF89] text-[#B54708]'
+              : 'bg-[#E8F5EE] border border-[#16845B]/25 text-[#16845B]'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {exportNotice.type === 'warning' ? (
+              <AlertCircle size={16} className="shrink-0 text-[#F79009]" />
+            ) : (
+              <CheckCircle2 size={16} className="shrink-0 text-[#16845B]" />
+            )}
+            <span>{exportNotice.message}</span>
+          </div>
+          <button
+            onClick={() => setExportNotice(null)}
+            className={`cursor-pointer transition-colors ${
+              exportNotice.type === 'warning'
+                ? 'text-[#B54708] hover:text-[#7A271A]'
+                : 'text-[#16845B] hover:text-[#126b49]'
+            }`}
+            aria-label="Dismiss export notice"
+          >
             ✕
           </button>
         </div>
