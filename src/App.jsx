@@ -170,11 +170,16 @@ function AccessDeniedScreen() {
  * Route guard enforcing authenticated sessions with verified email and optional role requirements
  */
 function ProtectedRoute({ children, requiredRole }) {
-  const { isAuthenticated, isEmailUnverified, authLoading, role, pendingInvitation } = useAuth();
+  const { isAuthenticated, isEmailUnverified, authLoading, role, pendingInvitation, isPasswordRecovery } = useAuth();
   const location = useLocation();
 
   if (authLoading) {
     return <AuthLoadingScreen />;
+  }
+
+  // If a password recovery session is active, route directly to password reset
+  if (isPasswordRecovery) {
+    return <Navigate to="/reset-password" replace />;
   }
 
   // If user signed in but email is unverified, require email confirmation
@@ -207,10 +212,15 @@ function ProtectedRoute({ children, requiredRole }) {
  * Route guard for public auth pages; redirects authenticated users to dashboard
  */
 function PublicRoute({ children }) {
-  const { isAuthenticated, authLoading } = useAuth();
+  const { isAuthenticated, authLoading, isPasswordRecovery } = useAuth();
 
   if (authLoading) {
     return <AuthLoadingScreen />;
+  }
+
+  // If in password recovery session, route directly to password reset
+  if (isPasswordRecovery) {
+    return <Navigate to="/reset-password" replace />;
   }
 
   if (isAuthenticated) {
@@ -225,9 +235,9 @@ export default function App() {
     <AppProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public Auth Routes */}
+          {/* Public & Authentication Routes */}
           <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-          <Route path="/reset-password" element={<PublicRoute><ResetPassword /></PublicRoute>} />
+          <Route path="/reset-password" element={<ResetPassword />} />
 
           {/* Protected Main App Layout routes */}
           <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />

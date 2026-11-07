@@ -120,8 +120,13 @@ export function AppProvider({ children }) {
   const [user, setUser] = useState(null);
   const [role, setRole] = useState(null);
   const [pendingInvitation, setPendingInvitation] = useState(false);
+  const [isPasswordRecovery, setIsPasswordRecovery] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
+
+  const clearPasswordRecovery = useCallback(() => {
+    setIsPasswordRecovery(false);
+  }, []);
 
   // Initialize from LocalStorage with fallback to seed data
   const [members, setMembers] = useState(() => loadFromStorage(STORAGE_KEYS.MEMBERS, MEMBERS));
@@ -619,6 +624,14 @@ export function AppProvider({ children }) {
     async function initSession() {
       try {
         setAuthLoading(true);
+
+        // Detect password recovery callback parameters from URL
+        const callback = parseAuthCallback(typeof window !== 'undefined' ? window.location : null);
+        const isRecoveryUrl = callback.type === 'recovery' || Boolean(typeof window !== 'undefined' && window.location.hash?.includes('type=recovery'));
+        if (isRecoveryUrl && isMounted) {
+          setIsPasswordRecovery(true);
+        }
+
         const { session: currentSession, error } = await getSession();
         if (error) {
           if (isMounted) {
@@ -627,6 +640,7 @@ export function AppProvider({ children }) {
             setUser(null);
             setRole(null);
             setPendingInvitation(false);
+            setIsPasswordRecovery(false);
             setAuthLoading(false);
           }
           return;
@@ -708,6 +722,7 @@ export function AppProvider({ children }) {
         setUser(null);
         setRole(null);
         setPendingInvitation(false);
+        setIsPasswordRecovery(false);
         setAuthError(null);
         setGymInfoMigrationPending(false);
         setAuthLoading(false);
@@ -717,9 +732,14 @@ export function AppProvider({ children }) {
       if (event === 'PASSWORD_RECOVERY') {
         setSession(newSession);
         setUser(newSession?.user || null);
+        setIsPasswordRecovery(true);
         setPendingInvitation(false);
         setAuthLoading(false);
         return;
+      }
+
+      if (event === 'USER_UPDATED') {
+        setIsPasswordRecovery(false);
       }
 
       if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'USER_UPDATED') {
@@ -835,6 +855,7 @@ export function AppProvider({ children }) {
       setUser(null);
       setRole(null);
       setPendingInvitation(false);
+      setIsPasswordRecovery(false);
       setAuthError(null);
       setGymInfoMigrationPending(false);
       setPtPackages([]);
@@ -2112,6 +2133,8 @@ export function AppProvider({ children }) {
     authError,
     isAuthenticated,
     pendingInvitation,
+    isPasswordRecovery,
+    clearPasswordRecovery,
     isEmailVerified,
     isEmailUnverified,
     isAdmin: role === 'admin',
@@ -2253,6 +2276,8 @@ export function useAuth() {
     authError: ctx.authError,
     isAuthenticated: ctx.isAuthenticated,
     pendingInvitation: ctx.pendingInvitation,
+    isPasswordRecovery: ctx.isPasswordRecovery,
+    clearPasswordRecovery: ctx.clearPasswordRecovery,
     isEmailVerified: ctx.isEmailVerified,
     isEmailUnverified: ctx.isEmailUnverified,
     isAdmin: ctx.isAdmin,

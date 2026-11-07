@@ -24,6 +24,7 @@ export default function ResetPassword() {
     logout,
     user,
     pendingInvitation,
+    clearPasswordRecovery,
     canAcceptStaffInvitation: authCanAccept,
     getUserRole: authGetUserRole,
     verifyOtp: authVerifyOtp,
@@ -224,7 +225,8 @@ export default function ResetPassword() {
           setError(result.error?.message || 'Failed to reset password. Please try again or request a new link.');
         } else {
           setSuccess(true);
-          // Clear temporary recovery session
+          // Clear temporary recovery session & recovery flag
+          if (clearPasswordRecovery) clearPasswordRecovery();
           await logout();
         }
       }
@@ -339,6 +341,7 @@ export default function ResetPassword() {
                   size="md"
                   className="w-full"
                   onClick={async () => {
+                    if (clearPasswordRecovery) clearPasswordRecovery();
                     if (isInviteMode) await logout();
                     navigate('/login', { replace: true });
                   }}
@@ -448,7 +451,7 @@ export default function ResetPassword() {
                     {!loading && <ArrowRight size={16} />}
                   </Button>
 
-                  {isInviteMode && (
+                  {isInviteMode ? (
                     <Button
                       type="button"
                       variant="secondary"
@@ -461,6 +464,21 @@ export default function ResetPassword() {
                       }}
                     >
                       <ArrowLeft size={14} /> Cancel & Sign Out
+                    </Button>
+                  ) : (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="md"
+                      disabled={loading}
+                      className="w-full"
+                      onClick={async () => {
+                        if (clearPasswordRecovery) clearPasswordRecovery();
+                        await logout();
+                        navigate('/login', { replace: true });
+                      }}
+                    >
+                      <ArrowLeft size={14} /> Cancel & Return to Sign In
                     </Button>
                   )}
                 </div>

@@ -185,9 +185,9 @@ test('11. [ResetPassword Component] ResetPassword handles token_hash and already
 });
 
 test('12. [Routing Contract] Invitation verification occurs before requiring authenticated session', () => {
-  // PublicRoute allows /login and /reset-password without existing active session
+  // PublicRoute allows /login without existing active session, and /reset-password is a standalone route
   assert.match(appSource, /<Route path="\/login" element=\{<PublicRoute><Login \/><\/PublicRoute>\} \/>/);
-  assert.match(appSource, /<Route path="\/reset-password" element=\{<PublicRoute><ResetPassword \/><\/PublicRoute>\} \/>/);
+  assert.match(appSource, /<Route path="\/reset-password" element=\{<ResetPassword \/>\} \/>/);
 
   // ProtectedRoute redirects users with pendingInvitation to /reset-password?mode=invite
   assert.match(appSource, /if \(pendingInvitation\) \{[\s\S]*?return <Navigate to="\/reset-password\?mode=invite" replace \/>;/);
