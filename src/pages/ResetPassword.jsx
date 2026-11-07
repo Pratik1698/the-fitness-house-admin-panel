@@ -9,7 +9,9 @@ import { useAuth } from '../context/AppContext';
 import {
   getSession as serviceGetSession,
   canAcceptStaffInvitation as serviceCanAccept,
-  getUserRole as serviceGetUserRole
+  getUserRole as serviceGetUserRole,
+  verifyOtp as serviceVerifyOtp,
+  parseAuthCallback as serviceParseAuthCallback,
 } from '../services/authService';
 
 export default function ResetPassword() {
@@ -24,11 +26,15 @@ export default function ResetPassword() {
     pendingInvitation,
     canAcceptStaffInvitation: authCanAccept,
     getUserRole: authGetUserRole,
+    verifyOtp: authVerifyOtp,
+    parseAuthCallback: authParseAuthCallback,
   } = useAuth();
 
   const getSession = authGetSession || serviceGetSession;
   const canAcceptStaffInvitation = authCanAccept || serviceCanAccept;
   const getUserRole = authGetUserRole || serviceGetUserRole;
+  const verifyOtp = authVerifyOtp || serviceVerifyOtp;
+  const parseAuthCallback = authParseAuthCallback || serviceParseAuthCallback;
 
   // Determine mode: first-time staff password setup vs ordinary forgotten-password recovery
   const searchParams = new URLSearchParams(location.search);
@@ -42,6 +48,7 @@ export default function ResetPassword() {
   const [loading, setLoading] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
   const [hasValidRecoverySession, setHasValidRecoverySession] = useState(false);
+  const [isAlreadyAccepted, setIsAlreadyAccepted] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(false);
 
@@ -53,22 +60,36 @@ export default function ResetPassword() {
       try {
         setCheckingSession(true);
 
-        // Check if hash or search contains error descriptions
-        const hash = window.location.hash || '';
-        const search = window.location.search || '';
-        const fullParams = new URLSearchParams(hash.replace(/^#/, '') || search.replace(/^\?/, ''));
+        // Check if hash or search contains error descriptions or callback params
+        const callback = parseAuthCallback(location);
 
-        if (fullParams.get('error') || fullParams.get('error_description')) {
+        if (callback.isError) {
           if (isMounted) {
             setHasValidRecoverySession(false);
             setError(
-              isInviteMode
+              callback.friendlyErrorMessage ||
+              (isInviteMode
                 ? 'This staff invitation link is invalid or has expired. Please contact the gym administrator.'
-                : 'This password-reset link is invalid or has expired. Please request a new one.'
+                : 'This password-reset link is invalid or has expired. Please request a new one.')
             );
             setCheckingSession(false);
           }
           return;
+        }
+
+        // Handle direct token_hash verification (e.g. from custom invite template)
+        if (callback.tokenHash && (callback.type === 'invite' || callback.type === 'email' || callback.type === 'recovery')) {
+          const verifyRes = await verifyOtp({
+            token_hash: callback.tokenHash,
+            type: callback.type || (isInviteMode ? 'invite' : 'recovery'),
+          });
+          if (!isMounted) return;
+          if (verifyRes.error) {
+            setHasValidRecoverySession(false);
+            setError(verifyRes.error.message || 'Invitation verification failed. The link may have expired.');
+            setCheckingSession(false);
+            return;
+          }
         }
 
         // Check active session from client
@@ -101,6 +122,17 @@ export default function ResetPassword() {
           if (!isMounted) return;
 
           if (!canAccept) {
+            // Check if user already accepted this invitation previously
+            const activeRole = await getUserRole(session.user.id);
+            if (!isMounted) return;
+
+            if (activeRole === 'staff') {
+              setIsAlreadyAccepted(true);
+              setHasValidRecoverySession(false);
+              setCheckingSession(false);
+              return;
+            }
+
             setHasValidRecoverySession(false);
             setError('No valid pending staff invitation was found for this account, or the invitation has expired. Please contact the gym administrator.');
             setCheckingSession(false);
@@ -129,7 +161,7 @@ export default function ResetPassword() {
     return () => {
       isMounted = false;
     };
-  }, [getSession, isInviteMode]);
+  }, [getSession, isInviteMode, location, parseAuthCallback, verifyOtp, canAcceptStaffInvitation, getUserRole]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -255,6 +287,31 @@ export default function ResetPassword() {
                   onClick={() => navigate(isInviteMode ? '/' : '/login', { replace: true })}
                 >
                   {isInviteMode ? 'Go to Dashboard' : 'Return to Sign In'}
+                  <ArrowRight size={16} />
+                </Button>
+              </div>
+            </div>
+          ) : isAlreadyAccepted ? (
+            <div className="py-2 space-y-4 text-center">
+              <div className="w-12 h-12 rounded-full bg-[#E8F5EE] text-[#16845B] flex items-center justify-center mx-auto">
+                <CheckCircle size={26} />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-[#25313B]">
+                  Staff Account Already Active
+                </h2>
+                <p className="text-xs text-[#64717B] mt-1">
+                  Your staff account has already completed invitation setup and is currently active.
+                </p>
+              </div>
+              <div className="pt-2">
+                <Button
+                  variant="primary"
+                  size="md"
+                  className="w-full"
+                  onClick={() => navigate('/', { replace: true })}
+                >
+                  Proceed to Dashboard
                   <ArrowRight size={16} />
                 </Button>
               </div>

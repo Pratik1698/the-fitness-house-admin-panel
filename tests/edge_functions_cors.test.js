@@ -239,22 +239,22 @@ test('11. [invite-staff] Redirection URL: uses confirmed production frontend fal
     const redirectOrigin = requestOrigin && allowed.has(requestOrigin)
       ? requestOrigin
       : CONFIRMED_PROD_ORIGIN;
-    return `${redirectOrigin}/login`;
+    return `${redirectOrigin}/reset-password?mode=invite`;
   }
 
   // Case A: Missing origin (CLI/cron invite dispatch) -> confirmed prod
-  assert.equal(resolveRedirect(null), `${CONFIRMED_PROD_ORIGIN}/login`);
+  assert.equal(resolveRedirect(null), `${CONFIRMED_PROD_ORIGIN}/reset-password?mode=invite`);
 
   // Case B: Foreign origin -> confirmed prod
-  assert.equal(resolveRedirect('https://evil-site.com'), `${CONFIRMED_PROD_ORIGIN}/login`);
+  assert.equal(resolveRedirect('https://evil-site.com'), `${CONFIRMED_PROD_ORIGIN}/reset-password?mode=invite`);
 
   // Case C: Confirmed production origin -> confirmed prod
-  assert.equal(resolveRedirect(CONFIRMED_PROD_ORIGIN), `${CONFIRMED_PROD_ORIGIN}/login`);
+  assert.equal(resolveRedirect(CONFIRMED_PROD_ORIGIN), `${CONFIRMED_PROD_ORIGIN}/reset-password?mode=invite`);
 
   // Case D: Previous production origin -> previous prod (retained for backward compatibility)
-  assert.equal(resolveRedirect(PREVIOUS_PROD_ORIGIN), `${PREVIOUS_PROD_ORIGIN}/login`);
+  assert.equal(resolveRedirect(PREVIOUS_PROD_ORIGIN), `${PREVIOUS_PROD_ORIGIN}/reset-password?mode=invite`);
 
   // Case E: Local development origins -> localhost
-  assert.equal(resolveRedirect(LOCALHOST_PORT_ORIGIN), `${LOCALHOST_PORT_ORIGIN}/login`);
-  assert.equal(resolveRedirect(LOOPBACK_IP_ORIGIN), `${LOOPBACK_IP_ORIGIN}/login`);
+  assert.equal(resolveRedirect(LOCALHOST_PORT_ORIGIN), `${LOCALHOST_PORT_ORIGIN}/reset-password?mode=invite`);
+  assert.equal(resolveRedirect(LOOPBACK_IP_ORIGIN), `${LOOPBACK_IP_ORIGIN}/reset-password?mode=invite`);
 });

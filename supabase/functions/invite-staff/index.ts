@@ -99,7 +99,7 @@ serve(async (req: Request) => {
     const redirectOrigin = requestOrigin && allowedRedirectOrigins.has(requestOrigin)
       ? requestOrigin
       : PRODUCTION_FRONTEND_URL;
-    const redirectTo = `${redirectOrigin}/login`;
+    const redirectTo = `${redirectOrigin}/reset-password?mode=invite`;
 
     // Initialize privileged admin client for GoTrue and service_role operations
     const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey, {

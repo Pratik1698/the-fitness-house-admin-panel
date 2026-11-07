@@ -11,6 +11,8 @@ import {
   requestPasswordReset as authRequestPasswordReset,
   resetPassword as authResetPassword,
   resendVerificationEmail as authResendVerificationEmail,
+  verifyOtp as authVerifyOtp,
+  parseAuthCallback,
 } from '../services/authService';
 import {
   getActiveMembershipPlans,
@@ -1998,6 +2000,8 @@ export function AppProvider({ children }) {
     requestPasswordReset: authRequestPasswordReset,
     resetPassword: authResetPassword,
     resendVerificationEmail: authResendVerificationEmail,
+    verifyOtp: authVerifyOtp,
+    parseAuthCallback,
     getSession,
     getUserRole,
     canAcceptStaffInvitation,
@@ -2137,6 +2141,8 @@ export function useAuth() {
     requestPasswordReset: ctx.requestPasswordReset,
     resetPassword: ctx.resetPassword,
     resendVerificationEmail: ctx.resendVerificationEmail,
+    verifyOtp: ctx.verifyOtp,
+    parseAuthCallback: ctx.parseAuthCallback,
     getSession: ctx.getSession,
     getUserRole: ctx.getUserRole,
     canAcceptStaffInvitation: ctx.canAcceptStaffInvitation,

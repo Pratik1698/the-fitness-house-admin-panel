@@ -6,6 +6,10 @@ import {
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useAuth } from '../context/AppContext';
+import {
+  verifyOtp as serviceVerifyOtp,
+  parseAuthCallback as serviceParseAuthCallback,
+} from '../services/authService';
 
 export default function Login() {
   const navigate = useNavigate();
@@ -20,7 +24,12 @@ export default function Login() {
     user,
     requestPasswordReset,
     resendVerificationEmail,
+    verifyOtp: authVerifyOtp,
+    parseAuthCallback: authParseAuthCallback,
   } = useAuth();
+
+  const verifyOtp = authVerifyOtp || serviceVerifyOtp;
+  const parseAuthCallback = authParseAuthCallback || serviceParseAuthCallback;
 
   // Mode: 'login' | 'forgot_password'
   const [mode, setMode] = useState('login');
@@ -43,8 +52,53 @@ export default function Login() {
 
   // Common UI states
   const [loading, setLoading] = useState(false);
+  const [verifyingInvite, setVerifyingInvite] = useState(false);
   const [acceptingInvitation, setAcceptingInvitation] = useState(false);
   const [error, setError] = useState(null);
+
+  // Handle invitation or auth callback parameters (errors, token hashes, or implicit sessions)
+  useEffect(() => {
+    const callback = parseAuthCallback(location);
+
+    if (callback.isError) {
+      setError(callback.friendlyErrorMessage);
+      if (typeof window !== 'undefined' && window.history?.replaceState) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+      return;
+    }
+
+    // Direct token_hash verification (from custom email template or PKCE)
+    if (callback.tokenHash && (callback.type === 'invite' || callback.type === 'email')) {
+      let isCancelled = false;
+      async function handleVerifyOtp() {
+        setVerifyingInvite(true);
+        setError(null);
+        try {
+          const res = await verifyOtp({
+            token_hash: callback.tokenHash,
+            type: callback.type || 'invite',
+          });
+          if (isCancelled) return;
+          if (res.error) {
+            setError(res.error.message || 'Invitation verification failed. The link may have expired.');
+          } else {
+            navigate('/reset-password?mode=invite', { replace: true });
+          }
+        } catch (err) {
+          if (!isCancelled) {
+            setError('Failed to verify invitation link. Please contact the gym administrator.');
+          }
+        } finally {
+          if (!isCancelled) setVerifyingInvite(false);
+        }
+      }
+      handleVerifyOtp();
+      return () => {
+        isCancelled = true;
+      };
+    }
+  }, [location, parseAuthCallback, verifyOtp, navigate]);
 
   // If already logged in with a valid session and role, redirect to target page or dashboard
   useEffect(() => {
@@ -210,7 +264,15 @@ export default function Login() {
 
         {/* Auth Card */}
         <div className="bg-white rounded-2xl border border-[#E1E6E9] shadow-sm p-6 sm:p-8">
-          {pendingInvitation ? (
+          {verifyingInvite ? (
+            <div className="text-center py-8 space-y-3">
+              <div className="w-10 h-10 border-2 border-[#16845B] border-t-transparent rounded-full animate-spin mx-auto" />
+              <h2 className="text-sm font-semibold text-[#25313B]">Verifying staff invitation...</h2>
+              <p className="text-xs text-[#64717B]">
+                Validating your access link and preparing the password setup screen.
+              </p>
+            </div>
+          ) : pendingInvitation ? (
             <div className="space-y-5">
               <div>
                 <h2 className="text-lg font-bold text-[#25313B] tracking-tight">Staff Account Activation</h2>

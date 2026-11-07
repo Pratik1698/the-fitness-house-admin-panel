@@ -609,6 +609,181 @@ export function onAuthStateChange(callback) {
   };
 }
 
+/**
+ * Safely parses authentication callback parameters from URL hash fragments and query search strings.
+ * Handles:
+ * - GoTrue error redirects: #error=access_denied&error_code=otp_expired&error_description=...
+ * - GoTrue implicit hash tokens: #access_token=...&refresh_token=...&type=invite
+ * - Direct token hashes: ?token_hash=...&type=invite (or #token_hash=...)
+ * - PKCE authorization codes: ?code=...
+ *
+ * @param {string|Location|{ search?: string, hash?: string }} [locationInput]
+ * @returns {{
+ *   hasCallback: boolean,
+ *   isError: boolean,
+ *   error: string|null,
+ *   errorCode: string|null,
+ *   errorDescription: string|null,
+ *   friendlyErrorMessage: string|null,
+ *   tokenHash: string|null,
+ *   type: string|null,
+ *   accessToken: string|null,
+ *   refreshToken: string|null,
+ *   code: string|null,
+ *   isInvite: boolean,
+ *   mode: string|null
+ * }}
+ */
+export function parseAuthCallback(locationInput) {
+  let searchStr = '';
+  let hashStr = '';
+
+  if (typeof locationInput === 'string') {
+    try {
+      const parsedUrl = new URL(locationInput, 'https://localhost');
+      searchStr = parsedUrl.search || '';
+      hashStr = parsedUrl.hash || '';
+    } catch {
+      searchStr = locationInput.includes('?') ? locationInput.split('?')[1].split('#')[0] : '';
+      hashStr = locationInput.includes('#') ? locationInput.split('#')[1] : '';
+    }
+  } else if (locationInput && typeof locationInput === 'object') {
+    searchStr = locationInput.search || '';
+    hashStr = locationInput.hash || '';
+  } else if (typeof window !== 'undefined' && window.location) {
+    searchStr = window.location.search || '';
+    hashStr = window.location.hash || '';
+  }
+
+  const searchParams = new URLSearchParams(searchStr.replace(/^\?/, ''));
+  const hashParams = new URLSearchParams(hashStr.replace(/^#/, ''));
+
+  const getParam = (key) => hashParams.get(key) || searchParams.get(key);
+
+  const error = getParam('error');
+  const errorCode = getParam('error_code');
+  const errorDescription = getParam('error_description');
+  const tokenHash = getParam('token_hash');
+  const type = getParam('type');
+  const accessToken = getParam('access_token');
+  const refreshToken = getParam('refresh_token');
+  const code = getParam('code');
+  const mode = getParam('mode');
+
+  const isError = Boolean(error || errorCode || errorDescription);
+  const isInvite = type === 'invite' || mode === 'invite';
+  const hasCallback = Boolean(isError || tokenHash || accessToken || code || isInvite);
+
+  let friendlyErrorMessage = null;
+  if (isError) {
+    const desc = (errorDescription || '').toLowerCase();
+    const codeLower = (errorCode || '').toLowerCase();
+    if (codeLower === 'otp_expired' || desc.includes('expired') || desc.includes('invalid')) {
+      friendlyErrorMessage = isInvite
+        ? 'This staff invitation link is invalid or has expired. Please contact the gym administrator to resend your invitation.'
+        : 'This invitation or verification link is invalid or has expired. Please contact the gym administrator to resend your invitation or request a new link.';
+    } else if (codeLower === 'access_denied' || error === 'access_denied') {
+      friendlyErrorMessage = isInvite
+        ? 'Access was denied for this staff invitation. Please contact the gym administrator.'
+        : 'Access was denied. Please verify your credentials or request a new link.';
+    } else {
+      friendlyErrorMessage = errorDescription || 'An error occurred during verification. Please request a new link.';
+    }
+  }
+
+  return {
+    hasCallback,
+    isError,
+    error,
+    errorCode,
+    errorDescription,
+    friendlyErrorMessage,
+    tokenHash,
+    type,
+    accessToken,
+    refreshToken,
+    code,
+    isInvite,
+    mode,
+  };
+}
+
+/**
+ * Verifies an OTP or token hash from an email link (e.g. staff invitation, signup confirmation, recovery).
+ * For staff invitations, the expected OTP type is 'invite' or 'email'.
+ *
+ * @param {{ token_hash?: string, token?: string, type?: string, email?: string }} params
+ * @returns {Promise<{ session: object|null, user: object|null, error: Error|null }>}
+ */
+export async function verifyOtp({ token_hash, token, type = 'invite', email } = {}) {
+  if (!token_hash && !token) {
+    return {
+      session: null,
+      user: null,
+      error: new Error('Missing verification token or token hash.'),
+    };
+  }
+
+  const isConfigured = typeof activeConfigured === 'function' ? await activeConfigured() : activeConfigured;
+  if (!isConfigured) {
+    return {
+      session: null,
+      user: null,
+      error: new Error('Supabase client is not configured.'),
+    };
+  }
+
+  const client = activeClient || supabase;
+
+  try {
+    let verifyParams = {};
+    if (token_hash) {
+      verifyParams = { token_hash, type };
+    } else if (token && email) {
+      verifyParams = { email, token, type };
+    } else if (token) {
+      verifyParams = { token_hash: token, type };
+    }
+
+    const { data, error } = await client.auth.verifyOtp(verifyParams);
+
+    if (error) {
+      const msg = error.message ? error.message.toLowerCase() : '';
+      if (msg.includes('expired') || error.code === 'otp_expired') {
+        return {
+          session: null,
+          user: null,
+          error: new Error('This invitation link has expired. Please contact the gym administrator to resend your invitation.'),
+        };
+      }
+      if (msg.includes('invalid') || error.code === 'validation_failed') {
+        return {
+          session: null,
+          user: null,
+          error: new Error('This invitation link is invalid. Please request a new invitation link from the administrator.'),
+        };
+      }
+      return {
+        session: null,
+        user: null,
+        error: new Error(error.message || 'Failed to verify invitation token.'),
+      };
+    }
+
+    return {
+      session: data?.session || null,
+      user: data?.user || null,
+      error: null,
+    };
+  } catch (err) {
+    return {
+      session: null,
+      user: null,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
+}
+
 export default {
   signInWithPassword,
   signOut,
@@ -625,4 +800,6 @@ export default {
   requestPasswordReset,
   resetPassword,
   resendVerificationEmail,
+  verifyOtp,
+  parseAuthCallback,
 };
