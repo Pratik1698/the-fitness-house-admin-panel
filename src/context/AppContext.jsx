@@ -37,6 +37,10 @@ import {
   getPtSessions,
   getTrainers,
   assignPtPackage as assignPtPackageService,
+  schedulePtSession as schedulePtSessionService,
+  completePtSession as completePtSessionService,
+  cancelPtSession as cancelPtSessionService,
+  updatePtScheduledSession as updatePtScheduledSessionService,
 } from '../services/ptService';
 import {
   getAttendanceLogs,
@@ -1483,9 +1487,39 @@ export function AppProvider({ children }) {
   }, []);
 
   /**
-   * Schedules a new PT training session
+   * Schedules a new PT training session with Supabase persistence
    */
-  const addPtSession = useCallback((sessionData) => {
+  const addPtSession = useCallback(async (sessionData) => {
+    if (session?.user && isSupabaseConfigured) {
+      try {
+        const client = ptClients.find(c => c.memberId === sessionData.memberId && c.status === 'active');
+        const assignmentId = sessionData.assignmentId || client?.assignmentId || client?.id;
+        if (!assignmentId) {
+          return { success: false, error: 'Active PT assignment not found for selected member.' };
+        }
+
+        const res = await schedulePtSessionService({
+          assignmentId,
+          sessionDate: sessionData.date || getLocalDateString(),
+          sessionTime: sessionData.time || '07:00 AM',
+          notes: sessionData.notes || '',
+        });
+
+        if (res.error) {
+          console.error('[AppContext.addPtSession] schedulePtSession error:', res.error);
+          return { success: false, error: res.error.message || 'Failed to schedule session.' };
+        }
+
+        // Refresh authoritative datasets
+        await fetchPtData();
+        return { success: true, data: res.data };
+      } catch (err) {
+        console.error('[AppContext.addPtSession] Unexpected exception:', err);
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    // Offline / Demo mode fallback:
     const maxPtsNum = ptSessions.reduce((max, s) => {
       const match = String(s?.id || '').match(/PTS(\d+)/i);
       const num = match ? parseInt(match[1], 10) : 0;
@@ -1497,6 +1531,7 @@ export function AppProvider({ children }) {
     const newSession = {
       ...sessionData,
       id,
+      sessionCode: id,
       date: sessionData.date || today,
       time: sessionData.time || '07:00 AM',
       status: sessionData.status || 'scheduled',
@@ -1505,7 +1540,6 @@ export function AppProvider({ children }) {
 
     setPtSessions(prev => [newSession, ...prev]);
 
-    // If session was created directly as completed, deduct 1 session
     if (newSession.status === 'completed' && newSession.memberId) {
       setPtClients(prev => prev.map(c => {
         if (c.memberId === newSession.memberId && c.status === 'active' && c.remainingSessions > 0) {
@@ -1522,79 +1556,109 @@ export function AppProvider({ children }) {
       }));
     }
 
-    return newSession;
-  }, [ptSessions]);
+    return { success: true, data: newSession };
+  }, [session, ptClients, ptSessions, fetchPtData]);
 
   /**
-   * Updates a session's status with consistent session count tracking
+   * Completes a scheduled PT session with atomic Supabase persistence and credit deduction
    */
-  const updatePtSessionStatus = useCallback((sessionId, newStatus, notesUpdate = null) => {
-    const session = ptSessions.find(s => s.id === sessionId);
-    if (!session) return;
-    const oldStatus = session.status;
-    if (oldStatus === newStatus && !notesUpdate) return;
+  const completePtSession = useCallback(async (sessionId, notes = null) => {
+    if (session?.user && isSupabaseConfigured) {
+      try {
+        const targetSession = ptSessions.find(s => s.id === sessionId);
+        const assignmentId = targetSession?.assignmentId;
+        if (!assignmentId) {
+          return { success: false, error: 'Assignment not found for session.' };
+        }
 
-    // Update Session
-    setPtSessions(prev => prev.map(s => {
-      if (s.id === sessionId) {
-        return {
-          ...s,
-          status: newStatus,
-          notes: notesUpdate !== null ? notesUpdate : s.notes,
-        };
-      }
-      return s;
-    }));
+        const res = await completePtSessionService({
+          assignmentId,
+          notes: notes !== null ? notes : targetSession?.notes,
+          scheduledSessionId: sessionId,
+        });
 
-    // Update Client session counts
-    if (session.memberId) {
-      // 1. Moving to completed (from non-completed)
-      if (newStatus === 'completed' && oldStatus !== 'completed') {
-        setPtClients(prev => prev.map(c => {
-          if (c.memberId === session.memberId) {
-            if (Number(c.remainingSessions) <= 0) return c; // Safeguard: cannot decrease below 0
-            const completed = (Number(c.completedSessions) || 0) + 1;
-            const remaining = Math.max(0, (Number(c.remainingSessions) || 0) - 1);
-            return {
-              ...c,
-              completedSessions: completed,
-              remainingSessions: remaining,
-              status: remaining === 0 ? 'completed' : c.status,
-            };
-          }
-          return c;
-        }));
-      }
-      // 2. Moving away from completed (reversal)
-      else if (oldStatus === 'completed' && newStatus !== 'completed') {
-        setPtClients(prev => prev.map(c => {
-          if (c.memberId === session.memberId) {
-            const completed = Math.max(0, (Number(c.completedSessions) || 0) - 1);
-            const remaining = (Number(c.remainingSessions) || 0) + 1;
-            return {
-              ...c,
-              completedSessions: completed,
-              remainingSessions: remaining,
-              status: remaining > 0 ? 'active' : c.status,
-            };
-          }
-          return c;
-        }));
+        if (res.error) {
+          console.error('[AppContext.completePtSession] completePtSession error:', res.error);
+          return { success: false, error: res.error.message || 'Failed to complete session.' };
+        }
+
+        await Promise.all([fetchPtData(), fetchPayments()]);
+        return { success: true, data: res.data };
+      } catch (err) {
+        console.error('[AppContext.completePtSession] Unexpected exception:', err);
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
       }
     }
-  }, [ptSessions]);
+
+    // Offline / Demo mode fallback:
+    updatePtSessionStatus(sessionId, 'completed', notes);
+    return { success: true };
+  }, [session, ptSessions, fetchPtData, fetchPayments, updatePtSessionStatus]);
 
   /**
-   * Updates session record details with status sync
+   * Cancels a scheduled PT session without deducting package credits
    */
-  const updatePtSession = useCallback((sessionId, updates) => {
-    const session = ptSessions.find(s => s.id === sessionId);
-    if (!session) return;
-    if (updates.status && updates.status !== session.status) {
+  const cancelPtSession = useCallback(async (sessionId, notes = null) => {
+    if (session?.user && isSupabaseConfigured) {
+      try {
+        const res = await cancelPtSessionService({
+          scheduledSessionId: sessionId,
+          notes,
+        });
+
+        if (res.error) {
+          console.error('[AppContext.cancelPtSession] cancelPtSession error:', res.error);
+          return { success: false, error: res.error.message || 'Failed to cancel session.' };
+        }
+
+        await fetchPtData();
+        return { success: true, data: res.data };
+      } catch (err) {
+        console.error('[AppContext.cancelPtSession] Unexpected exception:', err);
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    // Offline / Demo mode fallback:
+    updatePtSessionStatus(sessionId, 'cancelled', notes);
+    return { success: true };
+  }, [session, fetchPtData, updatePtSessionStatus]);
+
+  /**
+   * Updates session record details with status sync and Supabase persistence
+   */
+  const updatePtSession = useCallback(async (sessionId, updates) => {
+    if (session?.user && isSupabaseConfigured) {
+      try {
+        const res = await updatePtScheduledSessionService({
+          scheduledSessionId: sessionId,
+          sessionDate: updates.date,
+          sessionTime: updates.time,
+          notes: updates.notes,
+        });
+
+        if (res.error) {
+          console.error('[AppContext.updatePtSession] updatePtSession error:', res.error);
+          return { success: false, error: res.error.message || 'Failed to update session.' };
+        }
+
+        await fetchPtData();
+        return { success: true, data: res.data };
+      } catch (err) {
+        console.error('[AppContext.updatePtSession] Unexpected exception:', err);
+        return { success: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    // Offline / Demo mode fallback:
+    const sessionItem = ptSessions.find(s => s.id === sessionId);
+    if (!sessionItem) return { success: false, error: 'Session not found.' };
+    if (updates.status && updates.status !== sessionItem.status) {
       updatePtSessionStatus(sessionId, updates.status, updates.notes);
     }
     setPtSessions(prev => prev.map(s => s.id === sessionId ? { ...s, ...updates } : s));
-  }, [ptSessions, updatePtSessionStatus]);
+    return { success: true };
+  }, [session, ptSessions, fetchPtData, updatePtSessionStatus]);
 
   const addFollowup = useCallback(async (item) => {
     if (session?.user && isSupabaseConfigured) {
@@ -2085,7 +2149,7 @@ export function AppProvider({ children }) {
     members, setMembers, addMember, updateMember,
     followups, addFollowup, updateFollowup, rescheduleFollowup, recordFollowupOutcome,
     ptClients, setPtClients, addPtClient, updatePtClient,
-    ptSessions, setPtSessions, addPtSession, updatePtSessionStatus, updatePtSession,
+    ptSessions, setPtSessions, addPtSession, updatePtSessionStatus, updatePtSession, completePtSession, cancelPtSession,
     setNotifications, addNotification, updateNotification, sendNotification,
     // Gym Profile State (Phase 1: Supabase-backed)
     gymInfo, updateGymInfo,

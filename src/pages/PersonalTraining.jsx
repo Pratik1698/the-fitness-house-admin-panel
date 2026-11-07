@@ -40,6 +40,8 @@ export default function PersonalTraining() {
     addPtClient,
     updatePtClient,
     addPtSession,
+    completePtSession,
+    cancelPtSession,
     updatePtSessionStatus,
     updatePtSession,
   } = useApp();
@@ -179,7 +181,7 @@ export default function PersonalTraining() {
   // ==========================================
   // Session Status Handlers
   // ==========================================
-  const handleMarkCompleted = (session) => {
+  const handleMarkCompleted = async (session) => {
     if (session.status === 'completed') return;
 
     // Check if client has remaining sessions
@@ -189,14 +191,23 @@ export default function PersonalTraining() {
       return;
     }
 
-    updatePtSessionStatus(session.id, 'completed');
+    const res = await completePtSession(session.id);
+    if (res && res.success === false) {
+      alert(`Error completing session: ${res.error || 'Failed to complete session.'}`);
+      return;
+    }
+
     setNotice(`Session for ${session.memberName} marked as Completed. Remaining sessions updated.`);
     setTimeout(() => setNotice(null), 5000);
   };
 
-  const handleMarkCancelled = (session) => {
+  const handleMarkCancelled = async (session) => {
     if (session.status === 'cancelled') return;
-    updatePtSessionStatus(session.id, 'cancelled');
+    const res = await cancelPtSession(session.id);
+    if (res && res.success === false) {
+      alert(`Error cancelling session: ${res.error || 'Failed to cancel session.'}`);
+      return;
+    }
     setNotice(`Session for ${session.memberName} marked as Cancelled. No sessions deducted.`);
     setTimeout(() => setNotice(null), 5000);
   };
@@ -521,7 +532,7 @@ export default function PersonalTraining() {
                     <tr key={s.id} className="hover:bg-[#F5F7F8]/80 transition-colors">
                       {/* Session ID */}
                       <td className="px-4 py-3 text-xs font-mono font-bold text-[#16845B]">
-                        {s.id}
+                        {s.sessionCode || s.id}
                       </td>
 
                       {/* Date & Time */}
@@ -929,12 +940,16 @@ export default function PersonalTraining() {
           }}
           ptClients={ptClients}
           preselectedClient={schedulingForMember}
-          onSave={(sessionData) => {
-            addPtSession(sessionData);
+          onSave={async (sessionData) => {
+            const res = await addPtSession(sessionData);
+            if (res && res.success === false) {
+              return res;
+            }
             setShowScheduleModal(false);
             setSchedulingForMember(null);
             setNotice(`Session scheduled for ${sessionData.memberName} on ${sessionData.date} at ${sessionData.time}!`);
             setTimeout(() => setNotice(null), 5000);
+            return { success: true };
           }}
         />
       )}
@@ -944,11 +959,15 @@ export default function PersonalTraining() {
           isOpen={Boolean(editingSession)}
           onClose={() => setEditingSession(null)}
           session={editingSession}
-          onSave={(sessionId, updates) => {
-            updatePtSession(sessionId, updates);
+          onSave={async (sessionId, updates) => {
+            const res = await updatePtSession(sessionId, updates);
+            if (res && res.success === false) {
+              return res;
+            }
             setEditingSession(null);
-            setNotice(`Session ${sessionId} updated successfully.`);
+            setNotice(`Session ${editingSession.sessionCode || sessionId} updated successfully.`);
             setTimeout(() => setNotice(null), 5000);
+            return { success: true };
           }}
         />
       )}
@@ -1453,6 +1472,8 @@ function ScheduleSessionModal({ isOpen, onClose, ptClients, preselectedClient, o
   });
 
   const [errors, setErrors] = useState({});
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
 
   const handleMemberChange = (memberId) => {
     const cl = activeClients.find(c => c.memberId === memberId);
@@ -1472,20 +1493,32 @@ function ScheduleSessionModal({ isOpen, onClose, ptClients, preselectedClient, o
     return Object.keys(errs).length === 0;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    setSubmitError(null);
     if (!validate()) return;
 
     const cl = ptClients.find(c => c.memberId === form.memberId);
-    onSave({
-      memberId: form.memberId,
-      memberName: cl ? cl.memberName : 'Member',
-      trainer: form.trainer,
-      date: form.date,
-      time: form.time,
-      status: form.status,
-      notes: form.notes,
-    });
+    setSubmitting(true);
+    try {
+      const res = await onSave({
+        memberId: form.memberId,
+        memberName: cl ? cl.memberName : 'Member',
+        trainer: form.trainer,
+        date: form.date,
+        time: form.time,
+        status: form.status,
+        notes: form.notes,
+        assignmentId: cl?.assignmentId || cl?.id,
+      });
+      if (res && res.success === false) {
+        setSubmitError(res.error || 'Failed to schedule session.');
+      }
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -1496,16 +1529,22 @@ function ScheduleSessionModal({ isOpen, onClose, ptClients, preselectedClient, o
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit}>
-            Schedule Session
+          <Button onClick={handleSubmit} disabled={submitting || activeClients.length === 0}>
+            {submitting ? 'Scheduling...' : 'Schedule Session'}
           </Button>
         </>
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {submitError && (
+          <div className="p-3 bg-[#FFF0F0] border border-[#B42318]/25 rounded-xl text-xs text-[#B42318] flex items-center gap-2">
+            <AlertCircle size={14} className="shrink-0" />
+            <span>{submitError}</span>
+          </div>
+        )}
         {activeClients.length === 0 ? (
           <div className="p-4 bg-[#FFF2D8] border border-[#A66A00]/25 rounded-xl text-xs text-[#25313B]">
             <p className="font-bold text-[#A66A00]">No Active PT Clients with Remaining Sessions</p>
@@ -1588,36 +1627,55 @@ function EditSessionModal({ isOpen, onClose, session, onSave }) {
     status: session?.status || 'scheduled',
     notes: session?.notes || '',
   });
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState(null);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onSave(session.id, {
-      date: form.date,
-      time: form.time,
-      trainer: form.trainer,
-      status: form.status,
-      notes: form.notes,
-    });
+    setSubmitError(null);
+    setSubmitting(true);
+    try {
+      const res = await onSave(session.id, {
+        date: form.date,
+        time: form.time,
+        trainer: form.trainer,
+        status: form.status,
+        notes: form.notes,
+      });
+      if (res && res.success === false) {
+        setSubmitError(res.error || 'Failed to save changes.');
+      }
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={`Edit Session — ${session?.id} (${session?.memberName})`}
+      title={`Edit Session — ${session?.sessionCode || session?.id} (${session?.memberName})`}
       size="md"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose}>
+          <Button variant="secondary" onClick={onClose} disabled={submitting}>
             Cancel
           </Button>
-          <Button onClick={handleSubmit}>
-            Save Changes
+          <Button onClick={handleSubmit} disabled={submitting}>
+            {submitting ? 'Saving...' : 'Save Changes'}
           </Button>
         </>
       }
     >
       <form onSubmit={handleSubmit} className="space-y-4">
+        {submitError && (
+          <div className="p-3 bg-[#FFF0F0] border border-[#B42318]/25 rounded-xl text-xs text-[#B42318] flex items-center gap-2">
+            <AlertCircle size={14} className="shrink-0" />
+            <span>{submitError}</span>
+          </div>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Input
             label="Date"
@@ -1659,7 +1717,7 @@ function EditSessionModal({ isOpen, onClose, session, onSave }) {
         />
 
         <p className="text-[11px] text-[#64717B] bg-[#F5F7F8] p-2.5 rounded-lg border border-[#E1E6E9]">
-          Note: Transitioning status to "Completed" automatically decrements the member's remaining sessions by 1. Changing away from "Completed" restores the session count.
+          Note: Scheduled session dates, times, and notes can be updated here. To complete a session with credit deduction, use the Complete button on the Sessions Ledger.
         </p>
       </form>
     </Modal>

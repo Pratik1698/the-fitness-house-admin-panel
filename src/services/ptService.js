@@ -1,4 +1,5 @@
 import { supabase as defaultSupabase, isSupabaseConfigured as defaultIsConfigured } from './supabaseClient.js';
+import { calculateExpiryDate } from '../utils/memberUtils.js';
 
 /**
  * Personal Training Service
@@ -123,7 +124,8 @@ export async function getPtAssignments({ includeFinancials = false } = {}) {
           id,
           name,
           total_sessions,
-          price
+          price,
+          validity_days
         )
       `)
       .order('created_at', { ascending: false });
@@ -143,6 +145,8 @@ export async function getPtAssignments({ includeFinancials = false } = {}) {
       const total = Number(row.total_sessions) || Number(pkg.total_sessions) || 0;
       const completed = Number(row.completed_sessions) || 0;
       const remaining = Math.max(0, total - completed);
+      const validityDays = Number(pkg.validity_days) || 30;
+      const validTill = row.start_date ? calculateExpiryDate(row.start_date, validityDays) : '';
 
       return {
         id: row.id,
@@ -163,6 +167,8 @@ export async function getPtAssignments({ includeFinancials = false } = {}) {
         balance: Number(row.balance || 0),
         status: row.status,
         startDate: row.start_date,
+        validTill,
+        validityDays,
         notes: row.notes || '',
       };
     });
@@ -261,8 +267,9 @@ export async function assignPtPackage({
 }
 
 /**
- * Fetches completed PT sessions from public.pt_sessions joined with
+ * Fetches PT sessions from public.pt_scheduled_sessions joined with
  * pt_assignments, members, and trainers.
+ * Falls back to public.pt_sessions for backwards compatibility if pt_scheduled_sessions is unavailable.
  *
  * @returns {Promise<{ data: Array<object>|null, error: Error|null }>}
  */
@@ -278,7 +285,62 @@ export async function getPtSessions() {
   }
 
   try {
-    const { data, error } = await client
+    // 1. Primary: Query pt_scheduled_sessions (scheduled, completed, cancelled)
+    const { data: schedData, error: schedError } = await client
+      .from('pt_scheduled_sessions')
+      .select(`
+        id,
+        session_code,
+        assignment_id,
+        member_id,
+        trainer_id,
+        session_date,
+        session_time,
+        notes,
+        status,
+        completed_session_id,
+        created_at,
+        members (
+          id,
+          name,
+          member_code
+        ),
+        trainers (
+          id,
+          name
+        )
+      `)
+      .order('session_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (!schedError && schedData) {
+      const normalized = schedData.map((row) => {
+        const member = row.members || {};
+        const trainer = row.trainers || {};
+
+        return {
+          id: row.id,
+          sessionCode: row.session_code || '',
+          assignmentId: row.assignment_id,
+          memberId: row.member_id,
+          memberName: member.name || 'Member',
+          memberCode: member.member_code || '',
+          trainerId: row.trainer_id,
+          trainer: trainer.name || 'Coach Pravin Joshi',
+          date: row.session_date,
+          time: row.session_time || '07:00 AM',
+          status: row.status || 'scheduled',
+          notes: row.notes || '',
+          completedSessionId: row.completed_session_id,
+          createdAt: row.created_at,
+        };
+      });
+
+      return { data: normalized, error: null };
+    }
+
+    // 2. Fallback: If pt_scheduled_sessions is unavailable, fall back to pt_sessions
+    const { data: legData, error: legError } = await client
       .from('pt_sessions')
       .select(`
         id,
@@ -305,15 +367,15 @@ export async function getPtSessions() {
       `)
       .order('conducted_at', { ascending: false });
 
-    if (error) {
-      console.error('[ptService.getPtSessions] Database error:', error);
+    if (legError) {
+      console.error('[ptService.getPtSessions] Database error:', schedError || legError);
       return {
         data: null,
-        error: new Error(error.message || 'Failed to fetch PT sessions from database.'),
+        error: new Error((schedError || legError).message || 'Failed to fetch PT sessions from database.'),
       };
     }
 
-    const normalized = (data || []).map((row) => {
+    const legacyNormalized = (legData || []).map((row) => {
       const assignment = row.pt_assignments || {};
       const member = assignment.members || {};
       const trainer = row.trainers || {};
@@ -324,6 +386,7 @@ export async function getPtSessions() {
 
       return {
         id: row.id,
+        sessionCode: `PTS${String(row.session_number || 1).padStart(3, '0')}`,
         assignmentId: row.assignment_id,
         memberId: assignment.member_id,
         memberName: member.name || 'Member',
@@ -339,13 +402,203 @@ export async function getPtSessions() {
       };
     });
 
-    return { data: normalized, error: null };
+    return { data: legacyNormalized, error: null };
   } catch (err) {
     console.error('[ptService.getPtSessions] Unexpected exception:', err);
     return {
       data: null,
       error: err instanceof Error ? err : new Error(String(err)),
     };
+  }
+}
+
+/**
+ * Schedules a new PT session appointment in Supabase via public.schedule_pt_session RPC.
+ *
+ * @param {object} params
+ * @param {string} params.assignmentId - UUID of active PT assignment
+ * @param {string} params.sessionDate - Date of session in YYYY-MM-DD
+ * @param {string} params.sessionTime - Time slot (e.g. '07:00 AM')
+ * @param {string} [params.notes=''] - Optional session notes
+ * @returns {Promise<{ data: object|null, error: Error|null }>}
+ */
+export async function schedulePtSession({
+  assignmentId,
+  sessionDate,
+  sessionTime,
+  notes = '',
+} = {}) {
+  const client = getActiveClient();
+  const configured = getActiveConfigured();
+
+  if (!configured || !client) {
+    return { data: null, error: new Error('Supabase client is not configured.') };
+  }
+  if (!assignmentId) {
+    return { data: null, error: new Error('Assignment ID is required.') };
+  }
+  if (!sessionDate) {
+    return { data: null, error: new Error('Session date is required.') };
+  }
+  if (!sessionTime) {
+    return { data: null, error: new Error('Session time slot is required.') };
+  }
+
+  try {
+    const { data, error } = await client.rpc('schedule_pt_session', {
+      p_assignment_id: assignmentId,
+      p_session_date: sessionDate,
+      p_session_time: sessionTime,
+      p_notes: notes ? notes.trim() : null,
+    });
+
+    if (error) {
+      console.error('[ptService.schedulePtSession] RPC error:', error);
+      return { data: null, error: new Error(error.message || 'Failed to schedule PT session.') };
+    }
+
+    return {
+      data: data ? {
+        ...data,
+        id: data.id || data.session_id,
+        sessionCode: data.session_code || data.sessionCode || '',
+      } : null,
+      error: null,
+    };
+  } catch (err) {
+    console.error('[ptService.schedulePtSession] Unexpected exception:', err);
+    return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+
+/**
+ * Completes a PT session via public.complete_pt_session RPC.
+ * Atomically deducts 1 session credit from the assignment and marks scheduled session as completed.
+ *
+ * @param {object} params
+ * @param {string} params.assignmentId - UUID of active PT assignment
+ * @param {string} [params.notes=''] - Notes describing the session conducted
+ * @param {string} [params.scheduledSessionId=null] - UUID of scheduled session to complete
+ * @returns {Promise<{ data: object|null, error: Error|null }>}
+ */
+export async function completePtSession({
+  assignmentId,
+  notes = '',
+  scheduledSessionId = null,
+} = {}) {
+  const client = getActiveClient();
+  const configured = getActiveConfigured();
+
+  if (!configured || !client) {
+    return { data: null, error: new Error('Supabase client is not configured.') };
+  }
+  if (!assignmentId) {
+    return { data: null, error: new Error('Assignment ID is required.') };
+  }
+
+  try {
+    const { data, error } = await client.rpc('complete_pt_session', {
+      p_assignment_id: assignmentId,
+      p_notes: notes ? notes.trim() : null,
+      p_scheduled_session_id: scheduledSessionId || null,
+    });
+
+    if (error) {
+      console.error('[ptService.completePtSession] RPC error:', error);
+      return { data: null, error: new Error(error.message || 'Failed to complete PT session.') };
+    }
+
+    return { data, error: null };
+  } catch (err) {
+    console.error('[ptService.completePtSession] Unexpected exception:', err);
+    return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+
+/**
+ * Cancels a scheduled PT session via public.cancel_pt_scheduled_session RPC.
+ * Does NOT deduct session credits.
+ *
+ * @param {object} params
+ * @param {string} params.scheduledSessionId - UUID of scheduled session to cancel
+ * @param {string} [params.notes=''] - Reason for cancellation
+ * @returns {Promise<{ data: object|null, error: Error|null }>}
+ */
+export async function cancelPtSession({
+  scheduledSessionId,
+  notes = '',
+} = {}) {
+  const client = getActiveClient();
+  const configured = getActiveConfigured();
+
+  if (!configured || !client) {
+    return { data: null, error: new Error('Supabase client is not configured.') };
+  }
+  if (!scheduledSessionId) {
+    return { data: null, error: new Error('Scheduled session ID is required.') };
+  }
+
+  try {
+    const { data, error } = await client.rpc('cancel_pt_scheduled_session', {
+      p_scheduled_session_id: scheduledSessionId,
+      p_notes: notes ? notes.trim() : null,
+    });
+
+    if (error) {
+      console.error('[ptService.cancelPtSession] RPC error:', error);
+      return { data: null, error: new Error(error.message || 'Failed to cancel PT session.') };
+    }
+
+    return { data, error: null };
+  } catch (err) {
+    console.error('[ptService.cancelPtSession] Unexpected exception:', err);
+    return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
+  }
+}
+
+/**
+ * Updates a pending scheduled PT session via public.update_pt_scheduled_session RPC.
+ *
+ * @param {object} params
+ * @param {string} params.scheduledSessionId - UUID of scheduled session to update
+ * @param {string} [params.sessionDate] - Updated session date (YYYY-MM-DD)
+ * @param {string} [params.sessionTime] - Updated time slot
+ * @param {string} [params.notes] - Updated notes
+ * @returns {Promise<{ data: object|null, error: Error|null }>}
+ */
+export async function updatePtScheduledSession({
+  scheduledSessionId,
+  sessionDate,
+  sessionTime,
+  notes = '',
+} = {}) {
+  const client = getActiveClient();
+  const configured = getActiveConfigured();
+
+  if (!configured || !client) {
+    return { data: null, error: new Error('Supabase client is not configured.') };
+  }
+  if (!scheduledSessionId) {
+    return { data: null, error: new Error('Scheduled session ID is required.') };
+  }
+
+  try {
+    const { data, error } = await client.rpc('update_pt_scheduled_session', {
+      p_scheduled_session_id: scheduledSessionId,
+      p_session_date: sessionDate || null,
+      p_session_time: sessionTime ? sessionTime.trim() : null,
+      p_notes: notes ? notes.trim() : null,
+    });
+
+    if (error) {
+      console.error('[ptService.updatePtScheduledSession] RPC error:', error);
+      return { data: null, error: new Error(error.message || 'Failed to update PT session.') };
+    }
+
+    return { data, error: null };
+  } catch (err) {
+    console.error('[ptService.updatePtScheduledSession] Unexpected exception:', err);
+    return { data: null, error: err instanceof Error ? err : new Error(String(err)) };
   }
 }
 
