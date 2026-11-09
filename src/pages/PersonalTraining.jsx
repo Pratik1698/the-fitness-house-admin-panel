@@ -36,6 +36,8 @@ export default function PersonalTraining() {
     ptPackagesLoading,
     ptPackagesError,
     reloadPtPackages,
+    ptLoading,
+    initialDataLoading,
     trainers,
     addPtClient,
     updatePtClient,
@@ -680,7 +682,7 @@ export default function PersonalTraining() {
             </Badge>
           </div>
 
-          {ptPackagesLoading ? (
+          {(ptPackagesLoading || initialDataLoading) ? (
             <div className="py-16 flex flex-col items-center justify-center text-xs text-[#64717B]">
               <Loader2 size={24} className="animate-spin text-[#16845B] mb-2" />
               <span>Loading personal training packages from database...</span>

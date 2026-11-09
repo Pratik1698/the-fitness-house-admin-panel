@@ -36,6 +36,7 @@ export default function Members() {
     membersLoading,
     membersError,
     reloadMembers,
+    initialDataLoading,
   } = useApp();
 
   const todayStr = useMemo(() => getLocalDateString(), []);
@@ -458,7 +459,7 @@ export default function Members() {
 
       {/* Main Members Data Table Card */}
       <Card padding={false} className="overflow-hidden">
-        {membersLoading ? (
+        {(membersLoading || initialDataLoading) ? (
           <div className="py-20 text-center">
             <RotateCw size={28} className="animate-spin text-[#16845B] mx-auto mb-3" />
             <p className="text-sm font-semibold text-[#25313B]">Loading members from database...</p>

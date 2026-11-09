@@ -191,6 +191,63 @@ export async function getActiveMembers() {
 }
 
 /**
+ * Fetches all member subscription contracts from public.member_subscriptions,
+ * ordered by created_at descending.
+ *
+ * Provides historical subscription contracts with plan_id, plan_price snapshot,
+ * and status. Note: Direct SELECT on public.member_subscriptions is restricted
+ * to authenticated administrators by PostgreSQL Row Level Security.
+ *
+ * @returns {Promise<{ data: Array<object>|null, error: Error|null }>}
+ */
+export async function getMemberSubscriptions() {
+  if (!getIsConfigured()) {
+    return {
+      data: null,
+      error: new Error('Supabase client is not configured. Please check your environment configuration.'),
+    };
+  }
+
+  try {
+    const { data, error } = await getActiveClient()
+      .from('member_subscriptions')
+      .select('id, member_id, plan_id, plan_name, plan_price, status, start_date, expiry_date, amount_paid, total_liability, balance, created_at')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.warn('[memberService.getMemberSubscriptions] Query warning (restricted for staff):', error);
+      return {
+        data: null,
+        error: new Error(error.message || 'Failed to fetch member subscriptions from database.'),
+      };
+    }
+
+    const normalized = (data || []).map((row) => ({
+      id: row.id,
+      memberId: row.member_id,
+      planId: row.plan_id,
+      planName: row.plan_name || 'No Plan',
+      planPrice: Number(row.plan_price ?? 0),
+      status: row.status || 'active',
+      startDate: row.start_date || '',
+      expiryDate: row.expiry_date || '',
+      amountPaid: Number(row.amount_paid ?? 0),
+      totalLiability: Number(row.total_liability ?? row.plan_price ?? 0),
+      balance: Number(row.balance ?? 0),
+      createdAt: row.created_at || '',
+    }));
+
+    return { data: normalized, error: null };
+  } catch (err) {
+    console.error('[memberService.getMemberSubscriptions] Unexpected exception:', err);
+    return {
+      data: null,
+      error: err instanceof Error ? err : new Error(String(err)),
+    };
+  }
+}
+
+/**
  * Renews an existing member's subscription via public.renew_member_subscription RPC.
  *
  * @param {object} payload

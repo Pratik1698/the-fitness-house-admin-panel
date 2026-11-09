@@ -49,6 +49,7 @@ export default function Dashboard() {
     reloadFollowups,
     followupsLoading,
     session,
+    initialDataLoading,
   } = useApp();
 
   const [submittingCheckin, setSubmittingCheckin] = useState(false);
@@ -521,11 +522,7 @@ export default function Dashboard() {
         title={`${greeting}, Admin`}
         description="Here's what's happening at The Fitness House today · Near Vitthal Mandir, Arag"
         badge={
-          session?.user ? (
-            <Badge variant="success">● Live Database</Badge>
-          ) : (
-            <Badge variant="default">Demo Mode</Badge>
-          )
+          <Badge variant="success">● Live Database</Badge>
         }
         actions={
           <div className="flex items-center gap-2">
@@ -603,20 +600,22 @@ export default function Dashboard() {
         <KPICard
           icon={Users}
           label="Directory Members"
-          value={membersLoading ? '...' : members.length}
+          value={members.length}
           subtitle={`${activeMembers.length} active · ${recentlyExpired.length} expired`}
           variant="default"
           onClick={() => navigate('/members')}
+          loading={initialDataLoading || membersLoading}
         />
 
         {/* Card 2: Active Members */}
         <KPICard
           icon={UserCheck}
           label="Active Members"
-          value={membersLoading ? '...' : activeMembers.length}
+          value={activeMembers.length}
           subtitle={`${activeRate}% active rate`}
           variant="accent"
           onClick={() => navigate('/members?status=active')}
+          loading={initialDataLoading || membersLoading}
         />
 
         {/* Card 3: Pending Dues (Admin) or Today's Check-ins (Staff) */}
@@ -624,19 +623,21 @@ export default function Dashboard() {
           <KPICard
             icon={CreditCard}
             label="Pending Dues"
-            value={membersLoading ? '...' : formatINR(totalOutstanding)}
+            value={formatINR(totalOutstanding)}
             subtitle={`${pendingPayments.length} member${pendingPayments.length === 1 ? '' : 's'} with bal.`}
             variant={totalOutstanding > 0 ? 'warning' : 'default'}
             onClick={() => navigate('/payments?tab=pending')}
+            loading={initialDataLoading || membersLoading}
           />
         ) : (
           <KPICard
             icon={LogIn}
             label="Today's Check-ins"
-            value={checkinsLoading ? '...' : todayCheckins.length}
+            value={todayCheckins.length}
             subtitle={`${todayCheckins.length} visit${todayCheckins.length === 1 ? '' : 's'} recorded`}
             variant="accent"
             onClick={() => navigate('/checkins')}
+            loading={initialDataLoading || checkinsLoading}
           />
         )}
 
@@ -644,10 +645,11 @@ export default function Dashboard() {
         <KPICard
           icon={Clock}
           label="Expiring Soon"
-          value={membersLoading ? '...' : expiringSoon.length}
+          value={expiringSoon.length}
           subtitle="Within next 5 days"
           variant={expiringSoon.length > 0 ? 'warning' : 'default'}
           onClick={() => navigate('/notifications?filter=expiry')}
+          loading={initialDataLoading || membersLoading}
         />
 
         {/* Card 5: Today's Collection (Admin) or Active PT Clients (Staff) */}
@@ -655,19 +657,21 @@ export default function Dashboard() {
           <KPICard
             icon={IndianRupee}
             label="Today's Collection"
-            value={paymentsLoading ? '...' : formatINR(todayCollection)}
+            value={formatINR(todayCollection)}
             subtitle={`${todayPayments.length} completed receipt${todayPayments.length === 1 ? '' : 's'}`}
             variant="accent"
             onClick={() => navigate('/payments')}
+            loading={initialDataLoading || paymentsLoading}
           />
         ) : (
           <KPICard
             icon={Dumbbell}
             label="Active PT Clients"
-            value={ptLoading ? '...' : ptClients.length}
+            value={ptClients.length}
             subtitle={`${ptClients.length} enrolled client${ptClients.length === 1 ? '' : 's'}`}
             variant="default"
             onClick={() => navigate('/personal-training')}
+            loading={initialDataLoading || ptLoading}
           />
         )}
 
@@ -676,19 +680,21 @@ export default function Dashboard() {
           <KPICard
             icon={Calendar}
             label="This Month"
-            value={paymentsLoading ? '...' : formatINR(monthCollection)}
+            value={formatINR(monthCollection)}
             subtitle={`${monthPayments.length} transaction${monthPayments.length === 1 ? '' : 's'} this month`}
             variant="default"
             onClick={() => navigate('/payments')}
+            loading={initialDataLoading || paymentsLoading}
           />
         ) : (
           <KPICard
             icon={Activity}
             label="PT Sessions"
-            value={ptLoading ? '...' : ptSessions.length}
+            value={ptSessions.length}
             subtitle={`${ptSessions.length} session${ptSessions.length === 1 ? '' : 's'} recorded`}
             variant="default"
             onClick={() => navigate('/personal-training')}
+            loading={initialDataLoading || ptLoading}
           />
         )}
       </div>
@@ -726,58 +732,77 @@ export default function Dashboard() {
             </CardHeader>
 
             <div className="space-y-3">
-              {displayAttentionItems.map((item) => (
-                <div
-                  key={item.id}
-                  className={`p-3.5 rounded-xl border ${item.bgClass} flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors`}
-                >
-                  <div className="flex items-start sm:items-center gap-3 min-w-0">
-                    <div className={`w-9 h-9 rounded-full ${item.avatarClass} font-bold text-xs flex items-center justify-center shrink-0 shadow-xs`}>
-                      {item.memberName.charAt(0)}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <button
-                          onClick={() => navigate(`/members/${item.memberId}`)}
-                          className="text-sm font-semibold text-[#25313B] hover:text-[#16845B] transition-colors truncate text-left cursor-pointer"
-                        >
-                          {item.memberName}
-                        </button>
-                        <span className="text-[11px] font-mono text-[#64717B] bg-white/70 px-1.5 py-0.5 rounded border border-[#E1E6E9]">
-                          {item.memberCode || item.memberId}
-                        </span>
-                        <Badge variant={item.badgeVariant}>
-                          {item.badgeText}
-                        </Badge>
+              {(initialDataLoading || membersLoading || ptLoading || followupsLoading) ? (
+                <div className="space-y-3 animate-pulse">
+                  {[1, 2].map((i) => (
+                    <div key={i} className="p-3.5 rounded-xl border border-[#E1E6E9] bg-white flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0 flex-1">
+                        <div className="w-9 h-9 rounded-full bg-[#E1E6E9] shrink-0" />
+                        <div className="space-y-1.5 flex-1">
+                          <div className="h-4 bg-[#E1E6E9] rounded w-36" />
+                          <div className="h-3 bg-[#E1E6E9] rounded w-52" />
+                        </div>
                       </div>
-                      <p className="text-xs font-medium text-[#25313B]/85 mt-1 truncate">
-                        {item.reason}
-                      </p>
-                      <p className="text-[11px] text-[#64717B] truncate mt-0.5">
-                        {item.subtext}
-                      </p>
+                      <div className="h-8 bg-[#E1E6E9] rounded w-24 shrink-0" />
                     </div>
-                  </div>
-
-                  <div className="sm:self-center shrink-0 pt-1 sm:pt-0">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={item.onAction}
-                      className="w-full sm:w-auto text-xs font-semibold shadow-xs"
+                  ))}
+                </div>
+              ) : (
+                <>
+                  {displayAttentionItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className={`p-3.5 rounded-xl border ${item.bgClass} flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors`}
                     >
-                      {item.actionLabel}
-                    </Button>
-                  </div>
-                </div>
-              ))}
+                      <div className="flex items-start sm:items-center gap-3 min-w-0">
+                        <div className={`w-9 h-9 rounded-full ${item.avatarClass} font-bold text-xs flex items-center justify-center shrink-0 shadow-xs`}>
+                          {item.memberName.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <button
+                              onClick={() => navigate(`/members/${item.memberId}`)}
+                              className="text-sm font-semibold text-[#25313B] hover:text-[#16845B] transition-colors truncate text-left cursor-pointer"
+                            >
+                              {item.memberName}
+                            </button>
+                            <span className="text-[11px] font-mono text-[#64717B] bg-white/70 px-1.5 py-0.5 rounded border border-[#E1E6E9]">
+                              {item.memberCode || item.memberId}
+                            </span>
+                            <Badge variant={item.badgeVariant}>
+                              {item.badgeText}
+                            </Badge>
+                          </div>
+                          <p className="text-xs font-medium text-[#25313B]/85 mt-1 truncate">
+                            {item.reason}
+                          </p>
+                          <p className="text-[11px] text-[#64717B] truncate mt-0.5">
+                            {item.subtext}
+                          </p>
+                        </div>
+                      </div>
 
-              {attentionItems.length === 0 && (
-                <div className="text-center py-9 bg-[#F5F7F8]/50 rounded-xl border border-dashed border-[#E1E6E9]">
-                  <CheckCircle2 size={32} className="text-[#16845B] mx-auto mb-2" />
-                  <p className="text-sm font-semibold text-[#25313B]">All Clear!</p>
-                  <p className="text-xs text-[#64717B] mt-0.5">No expired passes, overdue balances, or urgent follow-ups right now.</p>
-                </div>
+                      <div className="sm:self-center shrink-0 pt-1 sm:pt-0">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={item.onAction}
+                          className="w-full sm:w-auto text-xs font-semibold shadow-xs"
+                        >
+                          {item.actionLabel}
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {attentionItems.length === 0 && (
+                    <div className="text-center py-9 bg-[#F5F7F8]/50 rounded-xl border border-dashed border-[#E1E6E9]">
+                      <CheckCircle2 size={32} className="text-[#16845B] mx-auto mb-2" />
+                      <p className="text-sm font-semibold text-[#25313B]">All Clear!</p>
+                      <p className="text-xs text-[#64717B] mt-0.5">No expired passes, overdue balances, or urgent follow-ups right now.</p>
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </Card>
@@ -810,57 +835,76 @@ export default function Dashboard() {
             </CardHeader>
 
             <div className="divide-y divide-[#E1E6E9] -mx-6">
-              {recentActivities.map((act) => {
-                const IconComponent = act.icon;
-                return (
-                  <div
-                    key={act.id}
-                    className="px-6 py-3.5 flex items-center justify-between gap-4 hover:bg-[#F5F7F8]/60 transition-colors"
-                  >
-                    <div className="flex items-center gap-3.5 min-w-0">
-                      <div className={`w-8 h-8 rounded-full ${act.iconBg} flex items-center justify-center shrink-0 shadow-xs`}>
-                        <IconComponent size={15} strokeWidth={2.2} />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-xs text-[#64717B]">
-                            {act.title}:
-                          </span>
-                          <button
-                            onClick={() => act.memberId && navigate(`/members/${act.memberId}`)}
-                            className="text-sm font-semibold text-[#25313B] hover:text-[#16845B] transition-colors truncate cursor-pointer text-left"
-                          >
-                            {act.memberName}
-                          </button>
+              {(initialDataLoading || membersLoading || paymentsLoading || ptLoading || checkinsLoading) ? (
+                <div className="p-6 space-y-4 animate-pulse">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center justify-between gap-4">
+                      <div className="flex items-center gap-3.5 flex-1">
+                        <div className="w-8 h-8 rounded-full bg-[#E1E6E9] shrink-0" />
+                        <div className="space-y-1.5 flex-1">
+                          <div className="h-3.5 bg-[#E1E6E9] rounded w-40" />
+                          <div className="h-3 bg-[#E1E6E9] rounded w-28" />
                         </div>
-                        <p className="text-xs text-[#64717B] truncate mt-0.5">
-                          {act.subtitle}
-                        </p>
                       </div>
+                      <div className="h-4 bg-[#E1E6E9] rounded w-16" />
                     </div>
-
-                    <div className="text-right shrink-0">
-                      {act.amount ? (
-                        <p className="text-sm font-bold text-[#16845B] tabular-nums">
-                          {act.amount}
-                        </p>
-                      ) : (
-                        <Badge variant={act.type === 'registration' ? 'default' : 'success'}>
-                          {act.type === 'checkin' ? 'Check-in' : act.type === 'pt' ? 'PT Done' : 'Member'}
-                        </Badge>
-                      )}
-                      <p className="text-[11px] text-[#64717B] mt-0.5">
-                        {act.time}
-                      </p>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {recentActivities.length === 0 && (
-                <div className="px-6 py-8 text-center text-xs text-[#64717B]">
-                  No recent activities recorded yet.
+                  ))}
                 </div>
+              ) : (
+                <>
+                  {recentActivities.map((act) => {
+                    const IconComponent = act.icon;
+                    return (
+                      <div
+                        key={act.id}
+                        className="px-6 py-3.5 flex items-center justify-between gap-4 hover:bg-[#F5F7F8]/60 transition-colors"
+                      >
+                        <div className="flex items-center gap-3.5 min-w-0">
+                          <div className={`w-8 h-8 rounded-full ${act.iconBg} flex items-center justify-center shrink-0 shadow-xs`}>
+                            <IconComponent size={15} strokeWidth={2.2} />
+                          </div>
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-xs text-[#64717B]">
+                                {act.title}:
+                              </span>
+                              <button
+                                onClick={() => act.memberId && navigate(`/members/${act.memberId}`)}
+                                className="text-sm font-semibold text-[#25313B] hover:text-[#16845B] transition-colors truncate cursor-pointer text-left"
+                              >
+                                {act.memberName}
+                              </button>
+                            </div>
+                            <p className="text-xs text-[#64717B] truncate mt-0.5">
+                              {act.subtitle}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="text-right shrink-0">
+                          {act.amount ? (
+                            <p className="text-sm font-bold text-[#16845B] tabular-nums">
+                              {act.amount}
+                            </p>
+                          ) : (
+                            <Badge variant={act.type === 'registration' ? 'default' : 'success'}>
+                              {act.type === 'checkin' ? 'Check-in' : act.type === 'pt' ? 'PT Done' : 'Member'}
+                            </Badge>
+                          )}
+                          <p className="text-[11px] text-[#64717B] mt-0.5">
+                            {act.time}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {recentActivities.length === 0 && (
+                    <div className="px-6 py-8 text-center text-xs text-[#64717B]">
+                      No recent activities recorded yet.
+                    </div>
+                  )}
+                </>
               )}
             </div>
           </Card>
@@ -1141,106 +1185,121 @@ export default function Dashboard() {
                   <CardDescription>Live operational summary</CardDescription>
                 </div>
               </div>
-              {session?.user ? (
-                <Badge variant="success">● Live Database</Badge>
-              ) : (
-                <Badge variant="default">Demo Mode</Badge>
-              )}
+              <Badge variant="success">● Live Database</Badge>
             </CardHeader>
 
             <div className="space-y-2.5">
-              {/* Row 1: Active Directory */}
-              <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
-                    <UserCheck size={15} />
-                  </div>
-                  <div>
-                    <span className="text-xs font-semibold text-[#25313B] block">Active Directory</span>
-                    <span className="text-[11px] text-[#64717B]">{activeMembers.length} valid of {members.length} members</span>
-                  </div>
+              {initialDataLoading ? (
+                <div className="space-y-2.5 animate-pulse">
+                  {[1, 2, 3, 4, 5].map((i) => (
+                    <div key={i} className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
+                      <div className="flex items-center gap-2.5 flex-1">
+                        <div className="w-7 h-7 rounded-lg bg-[#E1E6E9] shrink-0" />
+                        <div className="space-y-1.5 flex-1">
+                          <div className="h-3 bg-[#E1E6E9] rounded w-24" />
+                          <div className="h-2.5 bg-[#E1E6E9] rounded w-36" />
+                        </div>
+                      </div>
+                      <div className="h-5 bg-[#E1E6E9] rounded w-10" />
+                    </div>
+                  ))}
                 </div>
-                <span className="text-base font-bold text-[#25313B] tabular-nums">{activeMembers.length}</span>
-              </div>
-
-              {/* Financial Rows (Admin Only) */}
-              {isAdmin && (
+              ) : (
                 <>
-                  {/* Row 2: Today's Collection */}
+                  {/* Row 1: Active Directory */}
                   <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                       <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
-                        <IndianRupee size={15} />
+                        <UserCheck size={15} />
                       </div>
                       <div>
-                        <span className="text-xs font-semibold text-[#25313B] block">Today's Collection</span>
-                        <span className="text-[11px] text-[#64717B]">{todayPayments.length} completed receipt{todayPayments.length === 1 ? '' : 's'}</span>
+                        <span className="text-xs font-semibold text-[#25313B] block">Active Directory</span>
+                        <span className="text-[11px] text-[#64717B]">{activeMembers.length} valid of {members.length} members</span>
                       </div>
                     </div>
-                    <span className="text-base font-bold text-[#16845B] tabular-nums">{formatINR(todayCollection)}</span>
+                    <span className="text-base font-bold text-[#25313B] tabular-nums">{activeMembers.length}</span>
                   </div>
 
-                  {/* Row 3: This Month's Collection */}
+                  {/* Financial Rows (Admin Only) */}
+                  {isAdmin && (
+                    <>
+                      {/* Row 2: Today's Collection */}
+                      <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
+                            <IndianRupee size={15} />
+                          </div>
+                          <div>
+                            <span className="text-xs font-semibold text-[#25313B] block">Today's Collection</span>
+                            <span className="text-[11px] text-[#64717B]">{todayPayments.length} completed receipt{todayPayments.length === 1 ? '' : 's'}</span>
+                          </div>
+                        </div>
+                        <span className="text-base font-bold text-[#16845B] tabular-nums">{formatINR(todayCollection)}</span>
+                      </div>
+
+                      {/* Row 3: This Month's Collection */}
+                      <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
+                            <Calendar size={15} />
+                          </div>
+                          <div>
+                            <span className="text-xs font-semibold text-[#25313B] block">This Month</span>
+                            <span className="text-[11px] text-[#64717B]">{monthPayments.length} completed transaction{monthPayments.length === 1 ? '' : 's'}</span>
+                          </div>
+                        </div>
+                        <span className="text-base font-bold text-[#16845B] tabular-nums">{formatINR(monthCollection)}</span>
+                      </div>
+
+                      {/* Row 4: Pending Dues */}
+                      <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-7 h-7 rounded-lg bg-[#FFF2D8] text-[#A66A00] flex items-center justify-center shrink-0">
+                            <CreditCard size={15} />
+                          </div>
+                          <div>
+                            <span className="text-xs font-semibold text-[#25313B] block">Pending Dues</span>
+                            <span className="text-[11px] text-[#64717B]">{pendingPayments.length} member{pendingPayments.length === 1 ? '' : 's'} with balance</span>
+                          </div>
+                        </div>
+                        <span className={`text-base font-bold tabular-nums ${totalOutstanding > 0 ? 'text-[#B42318]' : 'text-[#16845B]'}`}>
+                          {formatINR(totalOutstanding)}
+                        </span>
+                      </div>
+                    </>
+                  )}
+
+                  {/* Row 5: PT Sessions Today */}
                   <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
                       <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
-                        <Calendar size={15} />
+                        <Dumbbell size={15} />
                       </div>
                       <div>
-                        <span className="text-xs font-semibold text-[#25313B] block">This Month</span>
-                        <span className="text-[11px] text-[#64717B]">{monthPayments.length} completed transaction{monthPayments.length === 1 ? '' : 's'}</span>
+                        <span className="text-xs font-semibold text-[#25313B] block">PT Sessions Today</span>
+                        <span className="text-[11px] text-[#64717B]">
+                          {completedPtToday.length} completed today
+                        </span>
                       </div>
                     </div>
-                    <span className="text-base font-bold text-[#16845B] tabular-nums">{formatINR(monthCollection)}</span>
+                    <span className="text-base font-bold text-[#25313B] tabular-nums">{completedPtToday.length}</span>
                   </div>
 
-                  {/* Row 4: Pending Dues */}
+                  {/* Row 6: Today's Check-ins (Local) */}
                   <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
                     <div className="flex items-center gap-2.5">
-                      <div className="w-7 h-7 rounded-lg bg-[#FFF2D8] text-[#A66A00] flex items-center justify-center shrink-0">
-                        <CreditCard size={15} />
+                      <div className="w-7 h-7 rounded-lg bg-[#F5F7F8] text-[#64717B] border border-[#E1E6E9] flex items-center justify-center shrink-0">
+                        <LogIn size={15} />
                       </div>
                       <div>
-                        <span className="text-xs font-semibold text-[#25313B] block">Pending Dues</span>
-                        <span className="text-[11px] text-[#64717B]">{pendingPayments.length} member{pendingPayments.length === 1 ? '' : 's'} with balance</span>
+                        <span className="text-xs font-semibold text-[#25313B] block">Today's Check-ins</span>
+                        <span className="text-[11px] text-[#64717B]">Reception Desk (Local)</span>
                       </div>
                     </div>
-                    <span className={`text-base font-bold tabular-nums ${totalOutstanding > 0 ? 'text-[#B42318]' : 'text-[#16845B]'}`}>
-                      {formatINR(totalOutstanding)}
-                    </span>
+                    <span className="text-base font-bold text-[#25313B] tabular-nums">{todayCheckins.length}</span>
                   </div>
                 </>
               )}
-
-              {/* Row 5: PT Sessions Today */}
-              <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-[#E8F5EE] text-[#16845B] flex items-center justify-center shrink-0">
-                    <Dumbbell size={15} />
-                  </div>
-                  <div>
-                    <span className="text-xs font-semibold text-[#25313B] block">PT Sessions Today</span>
-                    <span className="text-[11px] text-[#64717B]">
-                      {completedPtToday.length} completed today
-                    </span>
-                  </div>
-                </div>
-                <span className="text-base font-bold text-[#25313B] tabular-nums">{completedPtToday.length}</span>
-              </div>
-
-              {/* Row 6: Today's Check-ins (Local) */}
-              <div className="p-3 rounded-xl bg-[#F5F7F8] border border-[#E1E6E9] flex items-center justify-between">
-                <div className="flex items-center gap-2.5">
-                  <div className="w-7 h-7 rounded-lg bg-[#F5F7F8] text-[#64717B] border border-[#E1E6E9] flex items-center justify-center shrink-0">
-                    <LogIn size={15} />
-                  </div>
-                  <div>
-                    <span className="text-xs font-semibold text-[#25313B] block">Today's Check-ins</span>
-                    <span className="text-[11px] text-[#64717B]">Reception Desk (Local)</span>
-                  </div>
-                </div>
-                <span className="text-base font-bold text-[#25313B] tabular-nums">{todayCheckins.length}</span>
-              </div>
             </div>
           </Card>
 
@@ -1265,7 +1324,7 @@ export default function Dashboard() {
                 <div>
                   <CardTitle>PT Sessions Today</CardTitle>
                   <CardDescription>
-                    {session?.user ? 'Verified from database ledger' : 'Coach Pravin Joshi sessions'}
+                    Verified from database ledger
                   </CardDescription>
                 </div>
               </div>

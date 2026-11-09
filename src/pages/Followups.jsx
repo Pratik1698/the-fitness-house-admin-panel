@@ -24,6 +24,8 @@ export default function Followups() {
     updateFollowup,
     rescheduleFollowup,
     recordFollowupOutcome,
+    followupsLoading,
+    initialDataLoading,
   } = useApp();
 
   // Filters State
@@ -384,7 +386,13 @@ export default function Followups() {
 
       {/* Follow-up Queue List */}
       <Card padding={false}>
-        {filteredFollowups.length === 0 ? (
+        {(followupsLoading || initialDataLoading) ? (
+          <div className="py-20 text-center">
+            <RotateCcw size={28} className="animate-spin text-[#16845B] mx-auto mb-3" />
+            <p className="text-sm font-semibold text-[#25313B]">Loading follow-ups from database...</p>
+            <p className="text-xs text-[#64717B] mt-1">Please wait while the follow-up queue is loaded.</p>
+          </div>
+        ) : filteredFollowups.length === 0 ? (
           <EmptyState
             icon={PhoneCall}
             title={hasFilters ? "No follow-ups match your filters" : "Follow-up queue is completely clear"}

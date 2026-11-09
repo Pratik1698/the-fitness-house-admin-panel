@@ -45,7 +45,9 @@ export async function getPayments() {
         ),
         member_subscriptions (
           id,
-          plan_name
+          plan_name,
+          plan_id,
+          plan_price
         )
       `)
       .order('created_at', { ascending: false });
@@ -75,6 +77,8 @@ export async function getPayments() {
         memberCode: member.member_code || '',
         phone: member.phone || '',
         category: isPT ? 'Personal Training' : 'Membership',
+        planId: sub.plan_id || null,
+        planPrice: Number(sub.plan_price || 0),
         relatedPlan: sub.plan_name || (isPT ? 'PT Package' : 'Membership Dues'),
         amount: Number(row.amount || 0),
         method: row.payment_method,

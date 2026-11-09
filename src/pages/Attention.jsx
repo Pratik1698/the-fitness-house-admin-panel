@@ -14,7 +14,14 @@ import {
 
 export default function Attention() {
   const navigate = useNavigate();
-  const { members, ptClients, followups, isAdmin } = useApp();
+  const {
+    members,
+    ptClients,
+    followups,
+    isAdmin,
+    membersLoading,
+    initialDataLoading,
+  } = useApp();
 
   const todayStr = useMemo(() => getLocalDateString(), []);
 
@@ -364,15 +371,22 @@ export default function Attention() {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
-        <SummaryCard icon={Clock} label="Expiring" count={expiringMembers.length} color="warning" />
-        <SummaryCard icon={XCircle} label="Expired" count={expiredMembers.length} color="error" />
-        <SummaryCard icon={CreditCard} label="Pending Dues" count={isAdmin ? pendingPayments.length : '—'} color="warning" />
-        <SummaryCard icon={Dumbbell} label="PT Ending" count={ptEnding.length} color="default" />
-        <SummaryCard icon={PhoneCall} label="Follow-ups" count={followupsDue.length} color="default" />
+        <SummaryCard icon={Clock} label="Expiring" count={initialDataLoading || membersLoading ? '...' : expiringMembers.length} color="warning" />
+        <SummaryCard icon={XCircle} label="Expired" count={initialDataLoading || membersLoading ? '...' : expiredMembers.length} color="error" />
+        <SummaryCard icon={CreditCard} label="Pending Dues" count={isAdmin ? (initialDataLoading || membersLoading ? '...' : pendingPayments.length) : '—'} color="warning" />
+        <SummaryCard icon={Dumbbell} label="PT Ending" count={initialDataLoading || membersLoading ? '...' : ptEnding.length} color="default" />
+        <SummaryCard icon={PhoneCall} label="Follow-ups" count={initialDataLoading || membersLoading ? '...' : followupsDue.length} color="default" />
       </div>
 
       <Card>
-        <Tabs tabs={tabs} defaultTab="expiring" />
+        {(initialDataLoading || membersLoading) ? (
+          <div className="py-16 text-center">
+            <RotateCw size={24} className="animate-spin text-[#16845B] mx-auto mb-2" />
+            <p className="text-xs font-semibold text-[#25313B]">Loading operational alerts...</p>
+          </div>
+        ) : (
+          <Tabs tabs={tabs} defaultTab="expiring" />
+        )}
       </Card>
     </div>
   );

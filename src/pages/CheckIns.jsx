@@ -268,11 +268,7 @@ export default function CheckIns() {
         description="Live front-desk member attendance verification, pass validity checks, and persistent visit ledger."
         badge={
           <div className="flex items-center gap-2">
-            {session?.user ? (
-              <Badge variant="success">● Live Attendance Sync</Badge>
-            ) : (
-              <Badge variant="default">Demo Mode</Badge>
-            )}
+            <Badge variant="success">● Live Attendance Sync</Badge>
             <Badge variant="accent">Today: {todayCheckins.length} Visits ({uniqueMembersToday} Unique)</Badge>
           </div>
         }

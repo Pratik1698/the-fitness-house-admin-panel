@@ -27,6 +27,11 @@ import {
   exportAttendanceCSV,
   exportPtReportCSV,
 } from '../src/utils/exportUtils.js';
+import {
+  computePlanDetailsTableData,
+  computePlanDistributionData,
+  PLAN_PALETTE_COLORS,
+} from '../src/utils/analyticsUtils.js';
 
 // ---------------------------------------------------------------------------
 // Reference date
@@ -573,4 +578,257 @@ test('Reports chart: months with no payments have 0 totals', () => {
     assert.strictEqual(entry.pt, 0);
     assert.strictEqual(entry.total, 0);
   });
+});
+
+// ---------------------------------------------------------------------------
+// 7. Dynamic Membership Analytics & Plan Breakdown Regression Tests
+// ---------------------------------------------------------------------------
+
+const MOCK_CONFIGURED_PLANS = [
+  { id: 'p-daily', name: 'daily', duration_days: 1, price: 30, is_active: true },
+  { id: 'p-monthly', name: 'Monthly Plan', duration_days: 30, price: 700, is_active: true },
+  { id: 'p-quarterly', name: 'Quarterly Plan', duration_days: 90, price: 2000, is_active: true },
+  { id: 'p-halfyearly', name: 'Half Yearly Plan', duration_days: 180, price: 4000, is_active: true },
+  { id: 'p-annual', name: 'Annual Plan', duration_days: 365, price: 8000, is_active: true },
+];
+
+test('1. All five configured plans appear dynamically and in duration order', () => {
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: MOCK_CONFIGURED_PLANS,
+  });
+  assert.strictEqual(tableData.length, 5);
+  assert.strictEqual(tableData[0].name, 'daily');
+  assert.strictEqual(tableData[1].name, 'Monthly Plan');
+  assert.strictEqual(tableData[2].name, 'Quarterly Plan');
+  assert.strictEqual(tableData[3].name, 'Half Yearly Plan');
+  assert.strictEqual(tableData[4].name, 'Annual Plan');
+});
+
+test('2. Daily plan is not omitted and displays duration "1 Day"', () => {
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: MOCK_CONFIGURED_PLANS,
+  });
+  const daily = tableData.find(p => p.name === 'daily');
+  assert.ok(daily, 'Daily plan must be present');
+  assert.strictEqual(daily.duration, '1 Day');
+  assert.strictEqual(daily.price, 30);
+});
+
+test('3. Actual catalog prices come from plan configuration, not hardcoded constants', () => {
+  const customCatalog = [
+    { id: 'p1', name: 'Custom Tier', duration_days: 45, price: 999, is_active: true },
+  ];
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: customCatalog,
+  });
+  assert.strictEqual(tableData.length, 1);
+  assert.strictEqual(tableData[0].price, 999);
+  assert.strictEqual(tableData[0].duration, '45 Days');
+});
+
+test('4. Plan IDs correctly associate subscriptions with plans', () => {
+  const subscriptions = [
+    { id: 'sub-1', planId: 'p-monthly', planName: 'Monthly Plan', planPrice: 700, status: 'active' },
+    { id: 'sub-2', planId: 'p-monthly', planName: 'Monthly Plan', planPrice: 700, status: 'active' },
+    { id: 'sub-3', planId: 'p-annual', planName: 'Annual Plan', planPrice: 8000, status: 'active' },
+  ];
+  const members = [
+    { id: 'm-1', currentSubscriptionId: 'sub-1', plan: 'Monthly Plan', status: 'active' },
+    { id: 'm-2', currentSubscriptionId: 'sub-2', plan: 'Monthly Plan', status: 'active' },
+    { id: 'm-3', currentSubscriptionId: 'sub-3', plan: 'Annual Plan', status: 'active' },
+  ];
+
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: MOCK_CONFIGURED_PLANS,
+    subscriptions,
+    members,
+  });
+
+  const monthly = tableData.find(p => p.id === 'p-monthly');
+  const annual = tableData.find(p => p.id === 'p-annual');
+  const daily = tableData.find(p => p.id === 'p-daily');
+
+  assert.strictEqual(monthly.activeCount, 2);
+  assert.strictEqual(monthly.enrolledCount, 2);
+  assert.strictEqual(annual.activeCount, 1);
+  assert.strictEqual(annual.enrolledCount, 1);
+  assert.strictEqual(daily.activeCount, 0);
+  assert.strictEqual(daily.enrolledCount, 0);
+});
+
+test('5. Renaming a plan does not break historical association when linked by plan_id', () => {
+  // Plan name in database changed from 'Monthly Plan' to 'Premium 30 Days'
+  const renamedPlans = [
+    { id: 'p-monthly', name: 'Premium 30 Days', duration_days: 30, price: 850, is_active: true },
+  ];
+  // Subscriptions have the original planId 'p-monthly' and old name
+  const subscriptions = [
+    { id: 'sub-1', planId: 'p-monthly', planName: 'Monthly Plan', planPrice: 700, status: 'active' },
+  ];
+  const members = [
+    { id: 'm-1', currentSubscriptionId: 'sub-1', plan: 'Monthly Plan', status: 'active' },
+  ];
+
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: renamedPlans,
+    subscriptions,
+    members,
+  });
+
+  assert.strictEqual(tableData.length, 1);
+  assert.strictEqual(tableData[0].name, 'Premium 30 Days');
+  assert.strictEqual(tableData[0].activeCount, 1);
+  assert.strictEqual(tableData[0].enrolledCount, 1);
+});
+
+test('6. Inactive plans with historical records are represented and flagged with isActive: false', () => {
+  const plansWithInactive = [
+    ...MOCK_CONFIGURED_PLANS,
+    { id: 'p-disc', name: 'Discontinued Tier', duration_days: 60, price: 1200, is_active: false },
+  ];
+  const subscriptions = [
+    { id: 'sub-old', planId: 'p-disc', planName: 'Discontinued Tier', planPrice: 1200, status: 'active' },
+  ];
+  const members = [
+    { id: 'm-old', currentSubscriptionId: 'sub-old', plan: 'Discontinued Tier', status: 'active' },
+  ];
+
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: plansWithInactive,
+    subscriptions,
+    members,
+  });
+
+  const disc = tableData.find(p => p.id === 'p-disc');
+  assert.ok(disc);
+  assert.strictEqual(disc.isActive, false);
+  assert.strictEqual(disc.activeCount, 1);
+  assert.strictEqual(disc.enrolledCount, 1);
+
+  // Chart reflects (Inactive) label
+  const chartData = computePlanDistributionData(tableData, 1);
+  const chartDisc = chartData.find(c => c.id === 'p-disc');
+  assert.ok(chartDisc);
+  assert.strictEqual(chartDisc.name, 'Discontinued Tier (Inactive)');
+});
+
+test('7. Active counts only include members with status: "active"', () => {
+  const subscriptions = [
+    { id: 'sub-act', planId: 'p-monthly', planName: 'Monthly Plan', planPrice: 700, status: 'active' },
+    { id: 'sub-exp', planId: 'p-monthly', planName: 'Monthly Plan', planPrice: 700, status: 'expired' },
+  ];
+  const members = [
+    { id: 'm-1', currentSubscriptionId: 'sub-act', plan: 'Monthly Plan', status: 'active' },
+    { id: 'm-2', currentSubscriptionId: 'sub-exp', plan: 'Monthly Plan', status: 'expired' },
+  ];
+
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: MOCK_CONFIGURED_PLANS,
+    subscriptions,
+    members,
+  });
+
+  const monthly = tableData.find(p => p.id === 'p-monthly');
+  assert.strictEqual(monthly.activeCount, 1, 'Only active members should be counted in activeCount');
+  assert.strictEqual(monthly.enrolledCount, 2, 'Total enrolled should reflect all historical subscriptions');
+});
+
+test('8. Historical enrollment counts reflect all historical subscriptions', () => {
+  const subscriptions = [
+    { id: 'sub-1', planId: 'p-quarterly', planName: 'Quarterly Plan', planPrice: 2000, status: 'active' },
+    { id: 'sub-2', planId: 'p-quarterly', planName: 'Quarterly Plan', planPrice: 2000, status: 'expired' },
+    { id: 'sub-3', planId: 'p-quarterly', planName: 'Quarterly Plan', planPrice: 2000, status: 'superseded' },
+  ];
+
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: MOCK_CONFIGURED_PLANS,
+    subscriptions,
+    members: [],
+  });
+
+  const quarterly = tableData.find(p => p.id === 'p-quarterly');
+  assert.strictEqual(quarterly.enrolledCount, 3);
+  assert.strictEqual(quarterly.activeCount, 0);
+});
+
+test('9. Only completed payments contribute to collected revenue (pending/failed/cancelled excluded)', () => {
+  const payments = [
+    { id: 'pay-1', planId: 'p-monthly', amount: 700, status: 'completed', category: 'Membership', date: TODAY },
+    { id: 'pay-2', planId: 'p-monthly', amount: 700, status: 'pending', category: 'Membership', date: TODAY },
+    { id: 'pay-3', planId: 'p-monthly', amount: 700, status: 'failed', category: 'Membership', date: TODAY },
+    { id: 'pay-4', planId: 'p-monthly', amount: 700, status: 'cancelled', category: 'Membership', date: TODAY },
+    { id: 'pay-5', planId: 'p-monthly', amount: 500, status: 'completed', category: 'Personal Training', date: TODAY }, // PT excluded
+  ];
+
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: MOCK_CONFIGURED_PLANS,
+    payments,
+  });
+
+  const monthly = tableData.find(p => p.id === 'p-monthly');
+  assert.strictEqual(monthly.totalRevenue, 700, 'Only completed membership payments should count');
+});
+
+test('10. Historical subscription prices remain unchanged when current plan prices change', () => {
+  // Current catalog price is ₹800
+  const catalog = [
+    { id: 'p-monthly', name: 'Monthly Plan', duration_days: 30, price: 800, is_active: true },
+  ];
+  // Historical subscription was contracted at ₹700
+  const subscriptions = [
+    { id: 'sub-1', planId: 'p-monthly', planName: 'Monthly Plan', planPrice: 700, status: 'active' },
+  ];
+
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: catalog,
+    subscriptions,
+  });
+
+  assert.strictEqual(tableData[0].price, 800, 'Catalog price displays 800');
+  // Confirm sub.planPrice was preserved at 700 and not overwritten
+  assert.strictEqual(subscriptions[0].planPrice, 700, 'Historical contracted price must remain 700');
+});
+
+test('11. Date filters do not incorrectly affect current active membership counts', () => {
+  const subscriptions = [
+    { id: 'sub-1', planId: 'p-monthly', planName: 'Monthly Plan', planPrice: 700, status: 'active' },
+  ];
+  const members = [
+    { id: 'm-1', currentSubscriptionId: 'sub-1', plan: 'Monthly Plan', status: 'active' },
+  ];
+  // Payment occurred in the past (excluded by date filter)
+  const payments = [
+    { id: 'pay-old', planId: 'p-monthly', amount: 700, status: 'completed', category: 'Membership', date: '2026-01-01' },
+  ];
+
+  // Restrictive date filter: only today
+  const isDateToday = (d) => d === TODAY;
+
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: MOCK_CONFIGURED_PLANS,
+    subscriptions,
+    members,
+    payments,
+    isDateInRange: isDateToday,
+  });
+
+  const monthly = tableData.find(p => p.id === 'p-monthly');
+  assert.strictEqual(monthly.activeCount, 1, 'Active members count is current-state and must NOT be reduced by date filter');
+  assert.strictEqual(monthly.totalRevenue, 0, 'Revenue for period correctly excludes out-of-range payment');
+});
+
+test('12. No hardcoded old prices or plan categories remain in reporting logic', () => {
+  const tableData = computePlanDetailsTableData({
+    allMembershipPlans: MOCK_CONFIGURED_PLANS,
+  });
+
+  const prices = tableData.map(p => p.price);
+  const names = tableData.map(p => p.name);
+
+  // None of the old prototype prices (1500, 4000, 7000, 12000) should be generated from catalog
+  assert.ok(!prices.includes(1500), '1500 prototype price must not exist');
+  assert.ok(!prices.includes(12000), '12000 prototype price must not exist');
+  assert.ok(names.includes('daily'), 'daily must be present');
+  assert.ok(names.includes('Monthly Plan'), 'Monthly Plan must be present');
+  assert.ok(names.includes('Annual Plan'), 'Annual Plan must be present');
 });

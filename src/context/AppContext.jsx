@@ -25,6 +25,7 @@ import {
 import {
   onboardMember as onboardMemberService,
   getActiveMembers,
+  getMemberSubscriptions,
   renewMemberSubscription as renewMemberSubscriptionService,
 } from '../services/memberService';
 import {
@@ -67,6 +68,7 @@ import { isSupabaseConfigured } from '../services/supabaseClient';
 import {
   fetchGymInfo as fetchGymInfoService,
   updateGymInfo as updateGymInfoService,
+  DEFAULT_GYM_INFO,
 } from '../services/gymInfoService';
 import {
   getPtPackages as getPtPackagesService,
@@ -92,24 +94,11 @@ import {
   getStaffOperationalSummary as getStaffOperationalSummaryService,
 } from '../services/staffService';
 import {
-  MEMBERS,
-  PAYMENTS,
-  CHECKINS,
-  FOLLOWUPS,
-  PT_CLIENTS,
-  PT_SESSIONS,
-  NOTIFICATIONS_DATA,
-  GYM_INFO,
-} from '../data/sampleData';
-import { STORAGE_KEYS, loadFromStorage, saveToStorage, clearTFHStorage, purgeStaleFixturesFromStorage } from '../utils/storage';
-import {
   getLocalDateString,
   getDaysDifference,
   getMembershipStatus,
   getExpiryClassification,
   generateNotificationMessage,
-  getNextMemberId,
-  getNextPaymentId,
 } from '../utils/memberUtils';
 
 const AppContext = createContext(null);
@@ -128,32 +117,18 @@ export function AppProvider({ children }) {
     setIsPasswordRecovery(false);
   }, []);
 
-  // Initialize from LocalStorage with fallback to seed data
-  const [members, setMembers] = useState(() => loadFromStorage(STORAGE_KEYS.MEMBERS, MEMBERS));
-  const [payments, setPayments] = useState(() => loadFromStorage(STORAGE_KEYS.PAYMENTS, PAYMENTS));
-  const [checkins, setCheckins] = useState(() => loadFromStorage(STORAGE_KEYS.CHECKINS, CHECKINS));
-  const [followups, setFollowups] = useState(() => {
-    purgeStaleFixturesFromStorage();
-    const raw = loadFromStorage(STORAGE_KEYS.FOLLOWUPS, FOLLOWUPS);
-    return Array.isArray(raw)
-      ? raw.filter(f => f && !String(f.id || '').startsWith('REM-') && !String(f.id || '').startsWith('NOTIF-'))
-      : FOLLOWUPS;
-  });
-  const [ptClients, setPtClients] = useState(() => loadFromStorage(STORAGE_KEYS.PT_CLIENTS, PT_CLIENTS));
-  const [ptSessions, setPtSessions] = useState(() => loadFromStorage(STORAGE_KEYS.PT_SESSIONS, PT_SESSIONS));
-  const [notifications, setNotifications] = useState(() => loadFromStorage(STORAGE_KEYS.NOTIFICATIONS, NOTIFICATIONS_DATA));
-  // gymInfo: for unauthenticated/demo mode, seed from localStorage (fallback to GYM_INFO constant).
-  // For authenticated users, Supabase is the authoritative source — see fetchGymInfo() below.
-  const [gymInfo, setGymInfo] = useState(() => {
-    if (!isSupabaseConfigured) {
-      // Offline demo mode: use localStorage with GYM_INFO constant as fallback
-      return loadFromStorage(STORAGE_KEYS.GYM_INFO, GYM_INFO);
-    }
-    // Authenticated mode: start with GYM_INFO constant as a placeholder until
-    // the real Supabase record is loaded. localStorage is NOT consulted so stale
-    // browser data can never override the database.
-    return { ...GYM_INFO };
-  });
+  // Initialize collections as clean empty arrays — Supabase is the sole authoritative source
+  const [members, setMembers] = useState([]);
+  const [payments, setPayments] = useState([]);
+  const [checkins, setCheckins] = useState([]);
+  const [followups, setFollowups] = useState([]);
+  const [ptClients, setPtClients] = useState([]);
+  const [ptSessions, setPtSessions] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [gymInfo, setGymInfo] = useState(DEFAULT_GYM_INFO);
+
+  // Overarching initial data loading state — tracks the initial batch of Supabase queries
+  const [initialDataLoading, setInitialDataLoading] = useState(true);
 
   // Supabase Gym Info State (Phase 1 — Gym Profile & Info synchronization)
   const [gymInfoLoading, setGymInfoLoading] = useState(false);
@@ -401,6 +376,37 @@ export function AppProvider({ children }) {
       setPaymentsError(err instanceof Error ? err.message : 'Unexpected error loading payments.');
     } finally {
       setPaymentsLoading(false);
+    }
+  }, [role]);
+
+  // Supabase Database Subscriptions Ledger State
+  const [subscriptions, setSubscriptions] = useState([]);
+  const [subscriptionsLoading, setSubscriptionsLoading] = useState(false);
+  const [subscriptionsError, setSubscriptionsError] = useState(null);
+
+  const fetchSubscriptions = useCallback(async () => {
+    // Financial isolation: staff accounts must not query full member subscriptions
+    if (role !== 'admin') {
+      setSubscriptions([]);
+      setSubscriptionsLoading(false);
+      setSubscriptionsError(null);
+      return;
+    }
+
+    setSubscriptionsLoading(true);
+    setSubscriptionsError(null);
+    try {
+      const { data, error } = await getMemberSubscriptions();
+      if (error) {
+        setSubscriptionsError(error.message || 'Failed to load member subscriptions from database.');
+      } else {
+        setSubscriptions(data || []);
+        setSubscriptionsError(null);
+      }
+    } catch (err) {
+      setSubscriptionsError(err instanceof Error ? err.message : 'Unexpected error loading subscriptions.');
+    } finally {
+      setSubscriptionsLoading(false);
     }
   }, [role]);
 
@@ -871,30 +877,34 @@ export function AppProvider({ children }) {
   // Fetch active membership plans, members, payments, PT data, attendance, notifications, followups,
   // PT packages, reminder settings, staff data, and gym profile whenever session is authenticated and authorized
   useEffect(() => {
+    let isMounted = true;
     if (session?.user && session.user.email_confirmed_at && isValidRole(role)) {
-      fetchGymInfo();
-      fetchPlans();
-      fetchMembers();
-      if (role === 'admin') {
-        fetchPayments();
-      } else {
-        setPayments([]);
-        setPaymentsLoading(false);
-        setPaymentsError(null);
-      }
-      fetchPtData();
-      fetchPtPackages();
-      fetchReminderSettingsData();
-      fetchStaffData();
-      fetchCheckins();
-      fetchNotifications();
-      fetchFollowups();
+      setInitialDataLoading(true);
+      const fetches = [
+        fetchGymInfo(),
+        fetchPlans(),
+        fetchMembers(),
+        role === 'admin' ? fetchPayments() : Promise.resolve(),
+        role === 'admin' ? fetchSubscriptions() : Promise.resolve(),
+        fetchPtData(),
+        fetchPtPackages(),
+        fetchReminderSettingsData(),
+        fetchStaffData(),
+        fetchCheckins(),
+        fetchNotifications(),
+        fetchFollowups(),
+      ];
+      Promise.allSettled(fetches).finally(() => {
+        if (isMounted) {
+          setInitialDataLoading(false);
+        }
+      });
     } else if (!session?.user) {
-      // Unauthenticated / demo mode: reset gym info to localStorage (or seed)
+      // Unauthenticated: clean empty arrays, no demo seeding
       setGymInfoDbId(null);
       setGymInfoLoading(false);
       setGymInfoError(null);
-      setGymInfo(loadFromStorage(STORAGE_KEYS.GYM_INFO, GYM_INFO));
+      setGymInfo(DEFAULT_GYM_INFO);
       setMembershipPlans([]);
       setAllMembershipPlans([]);
       setPlansLoading(false);
@@ -906,190 +916,34 @@ export function AppProvider({ children }) {
       setReminderSettings(DEFAULT_REMINDER_SETTINGS);
       setReminderSettingsLoading(false);
       setReminderSettingsError(null);
-      setMembers(loadFromStorage(STORAGE_KEYS.MEMBERS, MEMBERS));
+      setMembers([]);
       setMembersLoading(false);
       setMembersError(null);
-      setPayments(loadFromStorage(STORAGE_KEYS.PAYMENTS, PAYMENTS));
+      setPayments([]);
       setPaymentsLoading(false);
       setPaymentsError(null);
-      setPtClients(loadFromStorage(STORAGE_KEYS.PT_CLIENTS, PT_CLIENTS));
-      setPtSessions(loadFromStorage(STORAGE_KEYS.PT_SESSIONS, PT_SESSIONS));
+      setSubscriptions([]);
+      setSubscriptionsLoading(false);
+      setSubscriptionsError(null);
+      setPtClients([]);
+      setPtSessions([]);
       setPtLoading(false);
       setPtError(null);
-      setCheckins(loadFromStorage(STORAGE_KEYS.CHECKINS, CHECKINS));
+      setCheckins([]);
       setCheckinsLoading(false);
       setCheckinsError(null);
-      purgeStaleFixturesFromStorage();
-      const rawFu = loadFromStorage(STORAGE_KEYS.FOLLOWUPS, FOLLOWUPS);
-      const cleanFu = Array.isArray(rawFu)
-        ? rawFu.filter(f => f && !String(f.id || '').startsWith('REM-') && !String(f.id || '').startsWith('NOTIF-'))
-        : FOLLOWUPS;
-      setFollowups(cleanFu);
+      setFollowups([]);
       setFollowupsLoading(false);
       setFollowupsError(null);
-      setNotifications(loadFromStorage(STORAGE_KEYS.NOTIFICATIONS, NOTIFICATIONS_DATA));
+      setNotifications([]);
       setNotificationsLoading(false);
       setNotificationsError(null);
+      setInitialDataLoading(false);
     }
-  }, [session, role, fetchGymInfo, fetchPlans, fetchMembers, fetchPayments, fetchPtData, fetchPtPackages, fetchReminderSettingsData, fetchCheckins, fetchNotifications, fetchFollowups]);
-
-  // Sync state changes to LocalStorage (only when unauthenticated to preserve prototype records)
-  useEffect(() => {
-    if (!session?.user) {
-      saveToStorage(STORAGE_KEYS.MEMBERS, members);
-    }
-  }, [members, session]);
-
-  useEffect(() => {
-    if (!session?.user) {
-      saveToStorage(STORAGE_KEYS.PAYMENTS, payments);
-    }
-  }, [payments, session]);
-
-  useEffect(() => {
-    if (!session?.user) {
-      saveToStorage(STORAGE_KEYS.CHECKINS, checkins);
-    }
-  }, [checkins, session]);
-
-  useEffect(() => {
-    if (!session?.user) {
-      saveToStorage(STORAGE_KEYS.FOLLOWUPS, followups);
-    }
-  }, [followups, session]);
-  useEffect(() => {
-    if (!session?.user) {
-      saveToStorage(STORAGE_KEYS.PT_CLIENTS, ptClients);
-    }
-  }, [ptClients, session]);
-  useEffect(() => {
-    if (!session?.user) {
-      saveToStorage(STORAGE_KEYS.PT_SESSIONS, ptSessions);
-    }
-  }, [ptSessions, session]);
-  useEffect(() => {
-    if (!session?.user) {
-      saveToStorage(STORAGE_KEYS.NOTIFICATIONS, notifications);
-    }
-  }, [notifications, session]);
-  // Gym info localStorage sync: only write when unauthenticated (demo/offline mode).
-  // When authenticated, Supabase is the authoritative source — we must not let the
-  // browser's local copy silently diverge from the database.
-  useEffect(() => {
-    if (!session?.user) {
-      saveToStorage(STORAGE_KEYS.GYM_INFO, gymInfo);
-    }
-  }, [gymInfo, session]);
-
-  /**
-   * Automated rule synchronization:
-   * Generates deterministic follow-up reminders and notification drafts for:
-   * - 5 days before membership expiry
-   * - 3 days before membership expiry
-   * - On the expiry date / Expired
-   * - Outstanding dues requiring follow-up
-   * - Personal training packages approaching expiry (remainingSessions <= 3)
-   * Uses stable IDs to guarantee that refreshing or reopening never creates duplicates.
-   */
-  useEffect(() => {
-    if (authLoading || session?.user) {
-      // In authenticated database mode or during session resolution,
-      // persistent reminders are generated by PostgreSQL generate_expiry_reminders()
-      return;
-    }
-    const today = getLocalDateString();
-    const newNotifs = [];
-
-    // Scan Members for demo notification drafts only (manual follow-ups are never auto-polluted)
-    members.forEach(m => {
-      const cls = getExpiryClassification(m, today);
-      const daysLeft = cls.daysLeft;
-
-      if (cls.tier === 'expired') {
-        const notifId = `NOTIF-EXPD-${m.id}-${m.expiryDate}`;
-        if (!notifications.some(n => n.id === notifId) && !newNotifs.some(n => n.id === notifId)) {
-          newNotifs.push({
-            id: notifId,
-            memberId: m.id,
-            memberName: m.name,
-            phone: m.phone || '',
-            type: 'expired',
-            channel: 'WhatsApp',
-            message: generateNotificationMessage({ type: 'expired', member: m }),
-            scheduledDate: m.expiryDate,
-            status: 'scheduled',
-            daysBeforeExpiry: 0,
-          });
-        }
-      } else if (cls.tier === 'expiring_3d') {
-        const notifId = `NOTIF-EXP3-${m.id}-${m.expiryDate}`;
-        if (!notifications.some(n => n.id === notifId) && !newNotifs.some(n => n.id === notifId)) {
-          newNotifs.push({
-            id: notifId,
-            memberId: m.id,
-            memberName: m.name,
-            phone: m.phone || '',
-            type: daysLeft === 0 ? 'expiry_today' : 'expiry_3d',
-            channel: 'WhatsApp',
-            message: generateNotificationMessage({
-              type: daysLeft === 0 ? 'expiry_today' : 'expiry_3d',
-              member: m,
-              daysLeft,
-            }),
-            scheduledDate: today,
-            status: 'scheduled',
-            daysBeforeExpiry: daysLeft,
-          });
-        }
-      } else if (cls.tier === 'expiring_5d') {
-        const notifId = `NOTIF-EXP5-${m.id}-${m.expiryDate}`;
-        if (!notifications.some(n => n.id === notifId) && !newNotifs.some(n => n.id === notifId)) {
-          newNotifs.push({
-            id: notifId,
-            memberId: m.id,
-            memberName: m.name,
-            phone: m.phone || '',
-            type: 'expiry_5d',
-            channel: 'WhatsApp',
-            message: generateNotificationMessage({
-              type: 'expiry_5d',
-              member: m,
-              daysLeft,
-            }),
-            scheduledDate: today,
-            status: 'scheduled',
-            daysBeforeExpiry: daysLeft,
-          });
-        }
-      }
-
-      if (Number(m.balance) > 0) {
-        const notifId = `NOTIF-DUE-${m.id}-${m.balance}`;
-        if (!notifications.some(n => n.id === notifId) && !newNotifs.some(n => n.id === notifId)) {
-          newNotifs.push({
-            id: notifId,
-            memberId: m.id,
-            memberName: m.name,
-            phone: m.phone || '',
-            type: 'balance_due',
-            channel: 'WhatsApp',
-            message: generateNotificationMessage({
-              type: 'balance_due',
-              member: m,
-              balance: m.balance,
-            }),
-            scheduledDate: today,
-            status: 'scheduled',
-            daysBeforeExpiry: null,
-          });
-        }
-      }
-    });
-
-    if (newNotifs.length > 0) {
-      setNotifications(prev => [...newNotifs, ...prev]);
-    }
-  }, [members, ptClients, authLoading, session]);
+    return () => {
+      isMounted = false;
+    };
+  }, [session, role, fetchGymInfo, fetchPlans, fetchMembers, fetchPayments, fetchSubscriptions, fetchPtData, fetchPtPackages, fetchReminderSettingsData, fetchStaffData, fetchCheckins, fetchNotifications, fetchFollowups]);
 
   /**
    * Registers a new gym member via Supabase public.onboard_member RPC
@@ -1257,60 +1111,19 @@ export function AppProvider({ children }) {
         throw res.error;
       }
 
-      // Refresh both directory and payments ledger from the database
-      await Promise.all([fetchMembers(), fetchPayments()]);
+      // Refresh directory, payments ledger, and subscriptions from the database
+      await Promise.all([fetchMembers(), fetchPayments(), fetchSubscriptions()]);
 
       return res.data;
     }
 
-    // Fallback for unauthenticated/demo mode:
-    const payId = getNextPaymentId(payments);
-    const today = getLocalDateString();
-    const payAmount = Math.max(0, Number(amount) || 0);
-
-    let memberBalanceAfter = 0;
-    if (memberId) {
-      setMembers(prev => prev.map(m => {
-        if (m.id === memberId) {
-          const currentPaid = Number(m.amountPaid) || 0;
-          const currentBal = Number(m.balance) || 0;
-          const newBal = Math.max(0, currentBal - payAmount);
-          const newPaid = currentPaid + payAmount;
-          const totalFee = Math.max(Number(m.totalFee) || 0, newPaid + newBal);
-          memberBalanceAfter = newBal;
-          return { ...m, amountPaid: newPaid, balance: newBal, totalFee };
-        }
-        return m;
-      }));
-    }
-
-    const memberObj = members.find(m => m.id === memberId);
-    const isCompleted = memberObj ? payAmount >= (Number(memberObj.balance) || 0) : true;
-
-    const newPayment = {
-      id: payId,
-      receiptNumber: payId,
-      date: today,
-      memberId,
-      memberName: memberObj?.name || '',
-      category: 'Membership',
-      relatedPlan: memberObj?.plan || 'Membership',
-      amount: payAmount,
-      method: paymentMethod,
-      purpose: notes || 'Outstanding Dues Settlement',
-      status: isCompleted ? 'completed' : 'partial',
-    };
-
-    setPayments(prev => [newPayment, ...prev]);
-
-    return newPayment;
-  }, [session, members, payments, fetchMembers, fetchPayments]);
+    throw new Error('Authentication required: Supabase is the sole authoritative data source.');
+  }, [session, fetchMembers, fetchPayments, fetchSubscriptions]);
 
   const addPayment = recordDuesPayment;
 
   /**
-   * Logs a check-in persistently via public.record_member_checkin RPC when authenticated,
-   * or updates local state in demo mode.
+   * Logs a check-in persistently via public.record_member_checkin RPC when authenticated
    */
   const addCheckin = useCallback(async (checkinData) => {
     if (session?.user && isSupabaseConfigured) {
@@ -1328,39 +1141,11 @@ export function AppProvider({ children }) {
       return res.data;
     }
 
-    // Fallback for unauthenticated/demo mode:
-    const maxCiNum = checkins.reduce((max, c) => {
-      const match = String(c?.id || '').match(/CI(\d+)/i);
-      const num = match ? parseInt(match[1], 10) : 0;
-      return Math.max(max, isNaN(num) ? 0 : num);
-    }, 0);
-    const id = `CI${String(maxCiNum + 1).padStart(3, '0')}`;
-    const now = new Date();
-    const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-    const today = getLocalDateString();
-
-    const newCheckin = {
-      ...checkinData,
-      id,
-      time: checkinData.time || time,
-      date: checkinData.date || today,
-      status: checkinData.status || 'valid',
-      rawStatus: 'checked_in',
-    };
-
-    setCheckins(prev => [newCheckin, ...prev]);
-
-    // Increment member check-in count
-    if (checkinData.memberId) {
-      setMembers(prev => prev.map(m => m.id === checkinData.memberId ? { ...m, totalCheckins: (m.totalCheckins || 0) + 1 } : m));
-    }
-
-    return newCheckin;
-  }, [session, checkins, fetchCheckins]);
+    throw new Error('Authentication required: Supabase is the sole authoritative data source.');
+  }, [session, fetchCheckins]);
 
   /**
-   * Records member check-out via public.record_member_checkout RPC when authenticated,
-   * or updates local state in demo mode.
+   * Records member check-out via public.record_member_checkout RPC when authenticated
    */
   const checkoutMember = useCallback(async ({ checkinId, notes = '' }) => {
     if (session?.user && isSupabaseConfigured) {
@@ -1372,22 +1157,7 @@ export function AppProvider({ children }) {
       return res.data;
     }
 
-    // Fallback for unauthenticated/demo mode:
-    const now = new Date();
-    const time = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
-    setCheckins(prev => prev.map(c => {
-      if (c.id === checkinId || c.checkinId === checkinId) {
-        return {
-          ...c,
-          checkedOutAt: now.toISOString(),
-          checkedOutTime: time,
-          status: 'completed',
-          rawStatus: 'checked_out',
-        };
-      }
-      return c;
-    }));
-    return { success: true };
+    throw new Error('Authentication required: Supabase is the sole authoritative data source.');
   }, [session, fetchCheckins]);
 
   /**
@@ -1437,53 +1207,7 @@ export function AppProvider({ children }) {
       }
     }
 
-    // In-memory fallback (unauthenticated / offline demo mode)
-    const today = getLocalDateString();
-    const totalSessions = Number(clientData.totalSessions) || 8;
-    const completedSessions = Number(clientData.completedSessions) || 0;
-    const remainingSessions = Math.max(0, totalSessions - completedSessions);
-
-    const newClient = {
-      ...clientData,
-      totalSessions,
-      completedSessions,
-      remainingSessions,
-      startDate: clientData.startDate || today,
-      status: clientData.status || (remainingSessions > 0 ? 'active' : 'completed'),
-    };
-
-    setPtClients(prev => {
-      const existingIdx = prev.findIndex(c => c.memberId === clientData.memberId && c.packageId === clientData.packageId);
-      if (existingIdx >= 0) {
-        const copy = [...prev];
-        copy[existingIdx] = newClient;
-        return copy;
-      }
-      return [newClient, ...prev];
-    });
-
-    // Mark member as having PT
-    if (clientData.memberId) {
-      setMembers(prev => prev.map(m => m.id === clientData.memberId ? { ...m, hasPT: true } : m));
-    }
-
-    // Record PT Payment if requested
-    if (paymentData && Number(paymentData.amount) > 0) {
-      addPayment({
-        date: clientData.startDate || today,
-        memberId: clientData.memberId,
-        memberName: clientData.memberName,
-        category: 'Personal Training',
-        relatedPlan: clientData.package,
-        amount: Number(paymentData.amount),
-        method: paymentData.method || 'Cash',
-        purpose: `PT Package Fee (${clientData.package})`,
-        notes: paymentData.notes || `Assigned to ${clientData.trainer || 'Coach'}`,
-        status: 'completed',
-      });
-    }
-
-    return { success: true, data: newClient };
+    return { success: false, error: 'Authentication required: Supabase is the sole authoritative data source.' };
   }, [session, role, trainers, fetchPtData, fetchPayments, fetchMembers, addPayment]);
 
   /**
@@ -1540,45 +1264,8 @@ export function AppProvider({ children }) {
       }
     }
 
-    // Offline / Demo mode fallback:
-    const maxPtsNum = ptSessions.reduce((max, s) => {
-      const match = String(s?.id || '').match(/PTS(\d+)/i);
-      const num = match ? parseInt(match[1], 10) : 0;
-      return Math.max(max, isNaN(num) ? 0 : num);
-    }, 0);
-    const id = `PTS${String(maxPtsNum + 1).padStart(3, '0')}`;
-    const today = getLocalDateString();
-
-    const newSession = {
-      ...sessionData,
-      id,
-      sessionCode: id,
-      date: sessionData.date || today,
-      time: sessionData.time || '07:00 AM',
-      status: sessionData.status || 'scheduled',
-      notes: sessionData.notes || '',
-    };
-
-    setPtSessions(prev => [newSession, ...prev]);
-
-    if (newSession.status === 'completed' && newSession.memberId) {
-      setPtClients(prev => prev.map(c => {
-        if (c.memberId === newSession.memberId && c.status === 'active' && c.remainingSessions > 0) {
-          const completed = c.completedSessions + 1;
-          const remaining = Math.max(0, c.remainingSessions - 1);
-          return {
-            ...c,
-            completedSessions: completed,
-            remainingSessions: remaining,
-            status: remaining === 0 ? 'completed' : c.status,
-          };
-        }
-        return c;
-      }));
-    }
-
-    return { success: true, data: newSession };
-  }, [session, ptClients, ptSessions, fetchPtData]);
+    return { success: false, error: 'Authentication required: Supabase is the sole authoritative data source.' };
+  }, [session, ptClients, fetchPtData]);
 
   /**
    * Updates a session's status with consistent session count tracking (fallback & in-memory)
@@ -1670,10 +1357,8 @@ export function AppProvider({ children }) {
       }
     }
 
-    // Offline / Demo mode fallback:
-    updatePtSessionStatus(sessionId, 'completed', notes);
-    return { success: true };
-  }, [session, ptSessions, fetchPtData, fetchPayments, updatePtSessionStatus]);
+    return { success: false, error: 'Authentication required: Supabase is the sole authoritative data source.' };
+  }, [session, ptSessions, fetchPtData, fetchPayments]);
 
   /**
    * Cancels a scheduled PT session without deducting package credits
@@ -1699,10 +1384,8 @@ export function AppProvider({ children }) {
       }
     }
 
-    // Offline / Demo mode fallback:
-    updatePtSessionStatus(sessionId, 'cancelled', notes);
-    return { success: true };
-  }, [session, fetchPtData, updatePtSessionStatus]);
+    return { success: false, error: 'Authentication required: Supabase is the sole authoritative data source.' };
+  }, [session, fetchPtData]);
 
   /**
    * Updates session record details with status sync and Supabase persistence
@@ -1730,15 +1413,8 @@ export function AppProvider({ children }) {
       }
     }
 
-    // Offline / Demo mode fallback:
-    const sessionItem = ptSessions.find(s => s.id === sessionId);
-    if (!sessionItem) return { success: false, error: 'Session not found.' };
-    if (updates.status && updates.status !== sessionItem.status) {
-      updatePtSessionStatus(sessionId, updates.status, updates.notes);
-    }
-    setPtSessions(prev => prev.map(s => s.id === sessionId ? { ...s, ...updates } : s));
-    return { success: true };
-  }, [session, ptSessions, fetchPtData, updatePtSessionStatus]);
+    return { success: false, error: 'Authentication required: Supabase is the sole authoritative data source.' };
+  }, [session, fetchPtData]);
 
   const addFollowup = useCallback(async (item) => {
     if (session?.user && isSupabaseConfigured) {
@@ -1757,25 +1433,8 @@ export function AppProvider({ children }) {
       return res;
     }
 
-    const maxFuNum = followups.reduce((max, f) => {
-      const match = String(f?.id || '').match(/FU(\d+)/i);
-      const num = match ? parseInt(match[1], 10) : 0;
-      return Math.max(max, isNaN(num) ? 0 : num);
-    }, 0);
-    const id = item.id || `FU${String(maxFuNum + 1).padStart(3, '0')}`;
-    const memberObj = members.find(m => m.id === item.memberId);
-    const newFu = {
-      priority: 'medium',
-      category: 'general',
-      phone: memberObj?.phone || '',
-      lastContactDate: null,
-      ...item,
-      id,
-      status: item.status || 'pending',
-    };
-    setFollowups(prev => [newFu, ...prev]);
-    return { success: true, data: newFu };
-  }, [session, followups, members, fetchFollowups]);
+    throw new Error('Authentication required: Supabase is the sole authoritative data source.');
+  }, [session, fetchFollowups]);
 
   const updateFollowup = useCallback(async (id, updates) => {
     if (session?.user && isSupabaseConfigured) {
@@ -1792,8 +1451,7 @@ export function AppProvider({ children }) {
       return res;
     }
 
-    setFollowups(prev => prev.map(f => f.id === id ? { ...f, ...updates } : f));
-    return { success: true };
+    throw new Error('Authentication required: Supabase is the sole authoritative data source.');
   }, [session, fetchFollowups]);
 
   const rescheduleFollowup = useCallback(async (id, newDueDate, reason, notes) => {
@@ -1806,24 +1464,7 @@ export function AppProvider({ children }) {
       return res;
     }
 
-    const today = getLocalDateString();
-    setFollowups(prev => prev.map(f => {
-      if (f.id === id) {
-        const updatedNotes = notes
-          ? (f.notes ? `${f.notes} | Rescheduled: ${notes}` : `Rescheduled: ${notes}`)
-          : f.notes;
-        return {
-          ...f,
-          dueDate: newDueDate,
-          reason: reason || f.reason,
-          notes: updatedNotes,
-          status: 'pending',
-          lastContactDate: today,
-        };
-      }
-      return f;
-    }));
-    return { success: true };
+    throw new Error('Authentication required: Supabase is the sole authoritative data source.');
   }, [session, fetchFollowups]);
 
   const recordFollowupOutcome = useCallback(async (id, outcomeText, markCompleted = false) => {
@@ -1840,23 +1481,7 @@ export function AppProvider({ children }) {
       return res;
     }
 
-    const today = getLocalDateString();
-    setFollowups(prev => prev.map(f => {
-      if (f.id === id) {
-        const updatedNotes = outcomeText
-          ? (f.notes ? `${f.notes} | Contact Outcome: ${outcomeText}` : `Contact Outcome: ${outcomeText}`)
-          : f.notes;
-        return {
-          ...f,
-          lastContactDate: today,
-          outcome: outcomeText,
-          notes: updatedNotes,
-          status: markCompleted ? 'completed' : f.status,
-        };
-      }
-      return f;
-    }));
-    return { success: true };
+    throw new Error('Authentication required: Supabase is the sole authoritative data source.');
   }, [session, fetchFollowups]);
 
   const addNotification = useCallback((notif) => {
@@ -1910,74 +1535,14 @@ export function AppProvider({ children }) {
         throw res.error;
       }
 
-      // Refresh both directory and payments ledger from the database
-      await Promise.all([fetchMembers(), fetchPayments()]);
+      // Refresh directory, payments ledger, and subscriptions from the database
+      await Promise.all([fetchMembers(), fetchPayments(), fetchSubscriptions()]);
 
       return res.data;
     }
 
-    // Fallback for unauthenticated/demo mode:
-    const numPaid = Math.max(0, Number(amountPaid) || 0);
-    const prevBal = Math.max(0, Number(previousBalance) || 0);
-    const fee = Math.max(0, Number(planFee) || 0);
-
-    const invoiceTotal = settlePreviousBalance ? (fee + prevBal) : fee;
-    const remainingBalance = settlePreviousBalance
-      ? Math.max(0, (fee + prevBal) - numPaid)
-      : Math.max(0, fee - numPaid) + prevBal;
-
-    const totalLiability = fee + prevBal;
-    const cumulativePaid = totalLiability - remainingBalance;
-    const today = getLocalDateString();
-    const effectiveStatus = getMembershipStatus({ expiryDate }, today);
-
-    // 1. Update Member in state
-    setMembers(prev => prev.map(m => {
-      if (m.id === memberId) {
-        return {
-          ...m,
-          plan: planName,
-          planId: planId,
-          startDate: startDate,
-          expiryDate: expiryDate,
-          totalFee: totalLiability,
-          amountPaid: cumulativePaid,
-          balance: remainingBalance,
-          status: effectiveStatus,
-          lastRenewalDate: today,
-        };
-      }
-      return m;
-    }));
-
-    // 2. Record Payment in payments list if numPaid > 0
-    if (numPaid > 0) {
-      const payId = getNextPaymentId(payments);
-      const memberObj = members.find(m => m.id === memberId);
-      const isCompleted = numPaid >= invoiceTotal;
-      const newPayment = {
-        id: payId,
-        date: today,
-        memberId: memberId,
-        memberName: memberObj?.name || '',
-        category: 'Membership',
-        relatedPlan: planName,
-        amount: numPaid,
-        method: paymentMethod,
-        status: isCompleted ? 'completed' : 'partial',
-        purpose: 'Membership Renewal',
-        notes: notes ? `Membership renewal: ${notes}` : `Membership renewed (${planName})`,
-      };
-      setPayments(prev => [newPayment, ...prev]);
-    }
-
-    return {
-      success: true,
-      remainingBalance,
-      invoiceTotal,
-      numPaid,
-    };
-  }, [session, payments, members, fetchMembers, fetchPayments]);
+    throw new Error('Authentication required: Supabase is the sole authoritative data source.');
+  }, [session, fetchMembers, fetchPayments, fetchSubscriptions]);
 
   /**
    * updateGymInfo — Phase 1 Supabase-backed gym profile update.
@@ -1987,9 +1552,6 @@ export function AppProvider({ children }) {
    *   2. On success, updates shared React state with the database-confirmed record.
    *   3. Throws a descriptive error on failure (caller shows error UI).
    *      NEVER shows success before the database confirms the write.
-   *
-   * When unauthenticated (demo/offline mode):
-   *   Falls back to local state update only (existing demo behaviour preserved).
    */
   const updateGymInfo = useCallback(async (updates) => {
     if (session?.user && isSupabaseConfigured) {
@@ -2010,10 +1572,8 @@ export function AppProvider({ children }) {
       return data;
     }
 
-    // Demo / unauthenticated fallback — preserve existing behaviour
-    setGymInfo(prev => ({ ...prev, ...updates }));
-    return { ...gymInfo, ...updates };
-  }, [session, gymInfoDbId, gymInfo]);
+    throw new Error('Authentication required: Supabase is the sole authoritative data source.');
+  }, [session, gymInfoDbId]);
 
   /**
    * Membership Plans mutation operations (Phase 2)
@@ -2098,26 +1658,10 @@ export function AppProvider({ children }) {
   }, []);
 
   /**
-   * Resets local storage and state to original seed data
+   * Resets local state (obsolete sample data path removed)
    */
   const resetToDemoData = useCallback(() => {
-    clearTFHStorage();
-    setMembers(MEMBERS);
-    setPayments(PAYMENTS);
-    setCheckins(CHECKINS);
-    setFollowups(FOLLOWUPS);
-    setPtClients(PT_CLIENTS);
-    setPtSessions(PT_SESSIONS);
-    setNotifications(NOTIFICATIONS_DATA);
-    setGymInfo(GYM_INFO);
-    setGymInfoDbId(null);
-    setGymInfoError(null);
-    setGymInfoMigrationPending(false);
-    setMembershipPlans([]);
-    setAllMembershipPlans([]);
-    setStaffRoster([]);
-    setPendingInvitations([]);
-    setSecurityAuditLogs([]);
+    // Obsolete: sample data and demo mode have been permanently removed.
   }, []);
 
   const isEmailVerified = Boolean(user?.email_confirmed_at);
@@ -2130,6 +1674,7 @@ export function AppProvider({ children }) {
     user,
     role,
     authLoading,
+    initialDataLoading,
     authError,
     isAuthenticated,
     pendingInvitation,
@@ -2175,6 +1720,12 @@ export function AppProvider({ children }) {
     reloadPayments: fetchPayments,
     recordDuesPayment,
     addPayment: recordDuesPayment,
+
+    // Subscriptions Ledger Supabase State (from Supabase public.member_subscriptions)
+    subscriptions,
+    subscriptionsLoading,
+    subscriptionsError,
+    reloadSubscriptions: fetchSubscriptions,
 
     // Personal Training Supabase State (from Supabase public.pt_assignments & pt_sessions)
     ptLoading,

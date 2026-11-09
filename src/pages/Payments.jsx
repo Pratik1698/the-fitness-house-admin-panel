@@ -34,7 +34,10 @@ export default function Payments() {
     paymentsLoading,
     paymentsError,
     reloadPayments,
+    initialDataLoading,
   } = useApp();
+
+  const isPaymentsDataLoading = paymentsLoading || initialDataLoading;
 
   // Filters & Search State
   const [search, setSearch] = useState('');
@@ -518,7 +521,7 @@ export default function Payments() {
               </tr>
             </thead>
             <tbody className="divide-y divide-[#E1E6E9]">
-              {paymentsLoading && (
+              {isPaymentsDataLoading && (
                 <tr>
                   <td colSpan={8} className="px-4 py-12 text-center text-sm text-[#64717B]">
                     <div className="flex flex-col items-center justify-center gap-2">
@@ -529,7 +532,7 @@ export default function Payments() {
                 </tr>
               )}
 
-              {!paymentsLoading && pagedPayments.map(p => {
+              {!isPaymentsDataLoading && pagedPayments.map(p => {
                 const purpose = getPaymentPurpose(p);
                 return (
                   <tr key={p.id} className="hover:bg-[#F5F7F8] transition-colors">
@@ -619,7 +622,7 @@ export default function Payments() {
               })}
 
               {/* Empty and No Results States */}
-              {!paymentsLoading && pagedPayments.length === 0 && (
+              {!isPaymentsDataLoading && pagedPayments.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-4 py-12">
                     <EmptyState

@@ -23,6 +23,10 @@ import {
   exportPtReportCSV,
 } from '../utils/exportUtils';
 import {
+  computePlanDetailsTableData,
+  computePlanDistributionData,
+} from '../utils/analyticsUtils';
+import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
@@ -35,7 +39,18 @@ import {
 
 export default function Reports() {
   const navigate = useNavigate();
-  const { members, payments, checkins, ptClients, ptSessions, role, isAdmin } = useApp();
+  const {
+    members,
+    payments,
+    checkins,
+    ptClients,
+    ptSessions,
+    allMembershipPlans,
+    membershipPlans,
+    subscriptions,
+    role,
+    isAdmin,
+  } = useApp();
 
   const todayStr = useMemo(() => getLocalDateString(), []);
 
@@ -300,56 +315,22 @@ export default function Reports() {
     }).length;
   }, [validPayments, dateRangePreset, customStart, customEnd, todayStr]);
 
-  // Plan Distribution dynamic data
-  const planDistributionData = useMemo(() => {
-    const counts = { Monthly: 0, Quarterly: 0, 'Half Yearly': 0, Yearly: 0, Other: 0 };
-    const colors = {
-      Monthly: '#16845B',
-      Quarterly: '#2196F3',
-      'Half Yearly': '#FF9800',
-      Yearly: '#9C27B0',
-      Other: '#64717B',
-    };
-
-    members.forEach(m => {
-      const planName = m.plan || 'Other';
-      if (counts[planName] !== undefined) {
-        counts[planName] += 1;
-      } else {
-        counts.Other += 1;
-      }
-    });
-
-    return Object.entries(counts)
-      .filter(([_, val]) => val > 0)
-      .map(([name, value]) => ({
-        name,
-        value,
-        color: colors[name] || '#64717B',
-      }));
-  }, [members]);
-
-  // Detailed Plan Breakdown Table data
+  // Detailed Plan Breakdown Table data (Dynamic from Supabase catalog, subscriptions, and payments)
   const planDetailsTableData = useMemo(() => {
-    const plansMeta = [
-      { id: 'Monthly', name: 'Monthly', duration: '30 Days', price: 1500 },
-      { id: 'Quarterly', name: 'Quarterly', duration: '90 Days', price: 4000 },
-      { id: 'Half Yearly', name: 'Half Yearly', duration: '180 Days', price: 7000 },
-      { id: 'Yearly', name: 'Yearly', duration: '365 Days', price: 12000 },
-    ];
-
-    return plansMeta.map(pm => {
-      const enrolled = members.filter(m => m.plan === pm.name);
-      const active = enrolled.filter(m => m.status === 'active').length;
-      const totalRevenue = enrolled.reduce((s, m) => s + (Number(m.amountPaid) || 0), 0);
-      return {
-        ...pm,
-        enrolledCount: enrolled.length,
-        activeCount: active,
-        totalRevenue,
-      };
+    return computePlanDetailsTableData({
+      allMembershipPlans,
+      membershipPlans,
+      members,
+      subscriptions,
+      payments,
+      isDateInRange,
     });
-  }, [members]);
+  }, [allMembershipPlans, membershipPlans, members, subscriptions, payments, dateRangePreset, customStart, customEnd, todayStr]);
+
+  // Plan Distribution dynamic chart data (Derived from authoritative plan table data)
+  const planDistributionData = useMemo(() => {
+    return computePlanDistributionData(planDetailsTableData, activeMembersCount);
+  }, [planDetailsTableData, activeMembersCount]);
 
   // ==========================================
   // 4. Attendance Reports Calculations
@@ -741,35 +722,45 @@ export default function Reports() {
                   <CardDescription>Active member ratio across membership plans</CardDescription>
                 </div>
               </CardHeader>
-              <div className="h-52 w-full flex items-center justify-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <PieChart>
-                    <Pie
-                      data={planDistributionData}
-                      innerRadius={50}
-                      outerRadius={75}
-                      paddingAngle={4}
-                      dataKey="value"
-                    >
-                      {planDistributionData.map((entry, index) => (
-                        <Cell key={`cell-${index}`} fill={entry.color} />
-                      ))}
-                    </Pie>
-                    <Tooltip formatter={(value) => [`${value} members`, '']} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="space-y-1.5 mt-2 border-t border-[#E1E6E9] pt-3">
-                {planDistributionData.map((item) => (
-                  <div key={item.name} className="flex items-center justify-between text-xs">
-                    <span className="flex items-center gap-2 text-[#64717B]">
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
-                      {item.name}
-                    </span>
-                    <span className="font-semibold text-[#25313B]">{item.value} members ({Math.round(item.value / (members.length || 1) * 100)}%)</span>
+              {planDistributionData.length === 0 ? (
+                <div className="h-52 w-full flex items-center justify-center text-xs text-[#64717B]">
+                  No active memberships currently
+                </div>
+              ) : (
+                <>
+                  <div className="h-52 w-full flex items-center justify-center">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={planDistributionData}
+                          innerRadius={50}
+                          outerRadius={75}
+                          paddingAngle={4}
+                          dataKey="value"
+                        >
+                          {planDistributionData.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(value) => [`${value} members`, '']} />
+                      </PieChart>
+                    </ResponsiveContainer>
                   </div>
-                ))}
-              </div>
+                  <div className="space-y-1.5 mt-2 border-t border-[#E1E6E9] pt-3">
+                    {planDistributionData.map((item) => (
+                      <div key={item.name} className="flex items-center justify-between text-xs">
+                        <span className="flex items-center gap-2 text-[#64717B]">
+                          <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: item.color }} />
+                          {item.name}
+                        </span>
+                        <span className="font-semibold text-[#25313B]">
+                          {item.value} members ({Math.round((item.value / (activeMembersCount || 1)) * 100)}%)
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </Card>
           </div>
 
@@ -1170,23 +1161,56 @@ export default function Reports() {
                   <tr>
                     <th className="px-4 py-3">Plan Name</th>
                     <th className="px-4 py-3">Duration</th>
-                    {isAdmin && <th className="px-4 py-3">Standard Fee</th>}
-                    <th className="px-4 py-3">Total Enrolled</th>
-                    <th className="px-4 py-3">Active Now</th>
-                    {isAdmin && <th className="px-4 py-3 text-right">Cumulative Collected</th>}
+                    {isAdmin && (
+                      <th className="px-4 py-3">
+                        Current Plan Fee
+                        <span className="block text-[10px] font-normal lowercase text-[#64717B]">(catalog)</span>
+                      </th>
+                    )}
+                    <th className="px-4 py-3">
+                      Total Enrolled
+                      <span className="block text-[10px] font-normal lowercase text-[#64717B]">(all-time)</span>
+                    </th>
+                    <th className="px-4 py-3">
+                      Active Now
+                      <span className="block text-[10px] font-normal lowercase text-[#16845B]">(current)</span>
+                    </th>
+                    {isAdmin && (
+                      <th className="px-4 py-3 text-right">
+                        Actual Revenue Collected
+                        <span className="block text-[10px] font-normal lowercase text-[#64717B]">({dateRangeLabel})</span>
+                      </th>
+                    )}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#E1E6E9]">
-                  {planDetailsTableData.map(plan => (
-                    <tr key={plan.id} className="hover:bg-[#F5F7F8]/50">
-                      <td className="px-4 py-3 font-semibold text-[#25313B]">{plan.name}</td>
-                      <td className="px-4 py-3 text-xs text-[#64717B]">{plan.duration}</td>
-                      {isAdmin && <td className="px-4 py-3 text-xs text-[#25313B] font-medium">{formatINR(plan.price)}</td>}
-                      <td className="px-4 py-3 text-xs font-bold text-[#25313B]">{plan.enrolledCount} members</td>
-                      <td className="px-4 py-3 text-xs font-bold text-[#16845B]">{plan.activeCount} active</td>
-                      {isAdmin && <td className="px-4 py-3 text-right font-bold text-[#25313B] tabular-nums">{formatINR(plan.totalRevenue)}</td>}
+                  {planDetailsTableData.length === 0 ? (
+                    <tr>
+                      <td colSpan={isAdmin ? 6 : 4} className="px-4 py-8 text-center text-xs text-[#64717B]">
+                        No membership plans configured.
+                      </td>
                     </tr>
-                  ))}
+                  ) : (
+                    planDetailsTableData.map(plan => (
+                      <tr key={plan.id} className="hover:bg-[#F5F7F8]/50">
+                        <td className="px-4 py-3 font-semibold text-[#25313B]">
+                          <div className="flex items-center gap-2">
+                            <span>{plan.name}</span>
+                            {!plan.isActive && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#F5F7F8] text-[#64717B] border border-[#E1E6E9]">
+                                Inactive
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-[#64717B]">{plan.duration}</td>
+                        {isAdmin && <td className="px-4 py-3 text-xs text-[#25313B] font-medium">{formatINR(plan.price)}</td>}
+                        <td className="px-4 py-3 text-xs font-bold text-[#25313B]">{plan.enrolledCount} members</td>
+                        <td className="px-4 py-3 text-xs font-bold text-[#16845B]">{plan.activeCount} active</td>
+                        {isAdmin && <td className="px-4 py-3 text-right font-bold text-[#25313B] tabular-nums">{formatINR(plan.totalRevenue)}</td>}
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>

@@ -83,6 +83,22 @@ export const EXTENDED_COLUMNS = [
   'head_coach',
 ];
 
+export const DEFAULT_GYM_INFO = Object.freeze({
+  name: 'The Fitness House',
+  tagline: 'Gym Management',
+  address: '',
+  phone: '',
+  whatsapp: '',
+  email: '',
+  timings: '',
+  location: '',
+  ownerName: '',
+  headCoach: '',
+  gstNumber: '',
+  currencyCode: 'INR',
+  currencySymbol: '₹',
+});
+
 export const ALL_GYM_INFO_COLUMNS = [
   ...BASE_COLUMNS,
   ...EXTENDED_COLUMNS,

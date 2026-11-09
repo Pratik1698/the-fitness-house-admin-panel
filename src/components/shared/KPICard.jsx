@@ -7,7 +7,27 @@ export function KPICard({
   variant = 'default',
   onClick,
   className = '',
+  loading = false,
 }) {
+  if (loading) {
+    return (
+      <div
+        className={`bg-white rounded-2xl border border-[#E1E6E9] p-3.5 sm:p-4 shadow-xs flex flex-col justify-between h-full min-h-[116px] sm:min-h-[120px] animate-pulse ${className}`}
+        aria-busy="true"
+        aria-label={`Loading ${label || 'metric'}`}
+      >
+        <div className="flex items-start justify-between gap-1.5 mb-2 min-h-[32px] sm:min-h-[34px]">
+          <div className="h-4 bg-[#E1E6E9] rounded w-24"></div>
+          <div className="w-7 h-7 sm:w-7.5 sm:h-7.5 rounded-lg bg-[#F5F7F8]"></div>
+        </div>
+        <div>
+          <div className="h-7 bg-[#E1E6E9] rounded w-20 mb-2"></div>
+          <div className="h-3 bg-[#E1E6E9] rounded w-32"></div>
+        </div>
+      </div>
+    );
+  }
+
   const iconVariants = {
     default: 'bg-[#F5F7F8] text-[#25313B]',
     accent: 'bg-[#E8F5EE] text-[#16845B]',
