@@ -991,9 +991,15 @@ export function AppProvider({ children }) {
       planId: memberData.planId,
       startDate: dbResult.start_date,
       expiryDate: dbResult.expiry_date,
-      totalFee: Number(dbResult.plan_price ?? 0),
-      amountPaid: Number(dbResult.initial_payment_amount ?? 0),
-      balance: Number(dbResult.outstanding_balance ?? 0),
+      totalFee: role === 'admin' && (dbResult.total_liability ?? dbResult.plan_price) !== null && (dbResult.total_liability ?? dbResult.plan_price) !== undefined
+        ? Number(dbResult.total_liability ?? dbResult.plan_price)
+        : null,
+      amountPaid: role === 'admin' && dbResult.initial_payment_amount !== null && dbResult.initial_payment_amount !== undefined
+        ? Number(dbResult.initial_payment_amount)
+        : null,
+      balance: role === 'admin' && dbResult.outstanding_balance !== null && dbResult.outstanding_balance !== undefined
+        ? Number(dbResult.outstanding_balance)
+        : null,
       status: getMembershipStatus({ expiryDate: dbResult.expiry_date }, today),
       joinDate: dbResult.start_date || today,
       totalCheckins: 0,

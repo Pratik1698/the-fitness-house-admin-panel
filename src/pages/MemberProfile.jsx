@@ -24,7 +24,7 @@ export default function MemberProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { members, payments, checkins, ptClients, ptSessions, followups, addCheckin, checkoutMember } = useApp();
+  const { members, payments, checkins, ptClients, ptSessions, followups, addCheckin, checkoutMember, isAdmin } = useApp();
   const [showRenewModal, setShowRenewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [selectedReceiptPayment, setSelectedReceiptPayment] = useState(null);
@@ -57,6 +57,7 @@ export default function MemberProfile() {
 
   const daysLeft = getDaysDifference(member.expiryDate, todayStr);
   const displayStatus = getMembershipStatus(member, todayStr);
+  const isFinancialRestricted = !isAdmin || member.totalFee === null;
 
   const handleCheckin = async () => {
     if (displayStatus === 'expired') {
@@ -84,9 +85,22 @@ export default function MemberProfile() {
             <InfoCard label="Expiry Date" value={member.expiryDate} highlight={displayStatus !== 'active'} />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <InfoCard label="Total Fee" value={`₹${member.totalFee?.toLocaleString() || '0'}`} />
-            <InfoCard label="Amount Paid" value={`₹${member.amountPaid?.toLocaleString() || '0'}`} />
-            <InfoCard label="Outstanding" value={member.balance > 0 ? `₹${member.balance.toLocaleString()}` : '—'} error={member.balance > 0} />
+            <InfoCard
+              label="Total Fee"
+              value={isFinancialRestricted ? 'Financial information restricted' : `₹${member.totalFee?.toLocaleString() || '0'}`}
+              restricted={isFinancialRestricted}
+            />
+            <InfoCard
+              label="Amount Paid"
+              value={isFinancialRestricted ? 'Financial information restricted' : `₹${member.amountPaid?.toLocaleString() || '0'}`}
+              restricted={isFinancialRestricted}
+            />
+            <InfoCard
+              label="Outstanding"
+              value={isFinancialRestricted ? 'Financial information restricted' : (member.balance > 0 ? `₹${member.balance.toLocaleString()}` : '—')}
+              error={!isFinancialRestricted && member.balance > 0}
+              restricted={isFinancialRestricted}
+            />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <InfoCard label="Total Check-ins" value={memberCheckins.length || member.totalCheckins || 0} />
@@ -122,9 +136,19 @@ export default function MemberProfile() {
       )
     },
     {
-      id: 'payments', label: 'Payments', count: memberPayments.length, content: (
+      id: 'payments', label: 'Payments', count: isAdmin ? memberPayments.length : undefined, content: (
         <div>
-          {memberPayments.length > 0 ? (
+          {!isAdmin ? (
+            <div className="py-8 text-center space-y-2">
+              <div className="inline-flex items-center justify-center w-10 h-10 rounded-full bg-[#FFF2D8] text-[#A66A00] mb-1">
+                <CreditCard size={20} />
+              </div>
+              <p className="text-sm font-semibold text-[#25313B]">Financial information restricted</p>
+              <p className="text-xs text-[#64717B] max-w-sm mx-auto">
+                Payment history and financial receipts are restricted to administrators. Contact an administrator to review payment records.
+              </p>
+            </div>
+          ) : memberPayments.length > 0 ? (
             <div className="space-y-2">
               {memberPayments.map(p => (
                 <div key={p.id} className="flex items-center justify-between p-3 bg-[#F5F7F8] rounded-xl border border-[#E1E6E9]">
@@ -276,7 +300,7 @@ export default function MemberProfile() {
     {
       id: 'activity', label: 'Activity', content: (
         <div className="space-y-2">
-          {[...memberPayments.map(p => ({ type: 'payment', date: p.date, desc: `Payment ₹${p.amount.toLocaleString()} (${p.category})` })),
+          {[...(isAdmin ? memberPayments.map(p => ({ type: 'payment', date: p.date, desc: `Payment ₹${p.amount.toLocaleString()} (${p.category})` })) : []),
             ...memberCheckins.map(c => ({ type: 'checkin', date: c.date, desc: `Checked in at ${c.time}` }))
           ].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 10).map((item, i) => (
             <div key={i} className="flex items-center gap-3 p-3 bg-[#F5F7F8] rounded-xl border border-[#E1E6E9]">
@@ -289,7 +313,7 @@ export default function MemberProfile() {
               </div>
             </div>
           ))}
-          {memberPayments.length === 0 && memberCheckins.length === 0 && (
+          {(!isAdmin || memberPayments.length === 0) && memberCheckins.length === 0 && (
             <p className="text-sm text-[#64717B] py-8 text-center">No activity history yet.</p>
           )}
         </div>
@@ -326,14 +350,16 @@ export default function MemberProfile() {
           <div className="flex items-center gap-2 flex-wrap">
             <Button size="sm" icon={LogIn} onClick={handleCheckin}>Check In</Button>
             <Button size="sm" variant="secondary" icon={Edit3} onClick={() => setShowEditModal(true)}>Edit Member</Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={IndianRupee}
-              onClick={() => navigate(`/payments?record=true&memberId=${member.id}`)}
-            >
-              Record Payment
-            </Button>
+            {isAdmin && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={IndianRupee}
+                onClick={() => navigate(`/payments?record=true&memberId=${member.id}`)}
+              >
+                Record Payment
+              </Button>
+            )}
             <Button size="sm" variant="secondary" icon={RotateCw} onClick={() => setShowRenewModal(true)}>Renew</Button>
           </div>
         </div>
@@ -394,11 +420,11 @@ export default function MemberProfile() {
   );
 }
 
-function InfoCard({ label, value, highlight, error }) {
+function InfoCard({ label, value, highlight, error, restricted }) {
   return (
     <div className={`p-3.5 rounded-xl border ${error ? 'border-[#B42318]/20 bg-[#FCE9E9]' : highlight ? 'border-[#A66A00]/20 bg-[#FFF2D8]' : 'border-[#E1E6E9] bg-[#F5F7F8]'}`}>
       <p className="text-xs text-[#64717B] font-medium">{label}</p>
-      <p className={`text-sm font-bold mt-0.5 ${error ? 'text-[#B42318]' : highlight ? 'text-[#A66A00]' : 'text-[#25313B]'}`}>{value}</p>
+      <p className={`mt-0.5 ${error ? 'text-[#B42318] text-sm font-bold' : highlight ? 'text-[#A66A00] text-sm font-bold' : restricted ? 'text-xs font-medium text-[#64717B] italic' : 'text-sm font-bold text-[#25313B]'}`}>{value}</p>
     </div>
   );
 }

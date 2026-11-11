@@ -37,6 +37,7 @@ export default function Members() {
     membersError,
     reloadMembers,
     initialDataLoading,
+    isAdmin,
   } = useApp();
 
   const todayStr = useMemo(() => getLocalDateString(), []);
@@ -418,7 +419,7 @@ export default function Members() {
                   { value: 'active', label: 'Active Members' },
                   { value: 'expiring', label: 'Expiring Soon (≤5d)' },
                   { value: 'expired', label: 'Expired' },
-                  { value: 'balance', label: 'Outstanding Balance' },
+                  ...(isAdmin ? [{ value: 'balance', label: 'Outstanding Balance' }] : []),
                 ]}
                 className="w-full sm:w-44"
               />
@@ -564,7 +565,9 @@ export default function Members() {
 
                       {/* Balance */}
                       <td className="py-4 px-4 text-right">
-                        {m.balance > 0 ? (
+                        {!isAdmin || m.balance === null || m.balance === undefined ? (
+                          <span className="text-xs font-medium text-[#64717B]">Restricted</span>
+                        ) : m.balance > 0 ? (
                           <div>
                             <span className="text-sm font-bold text-[#B42318] tabular-nums">
                               ₹{m.balance.toLocaleString('en-IN')}
@@ -595,7 +598,7 @@ export default function Members() {
                             <Eye size={14} /> View
                           </Button>
 
-                          {m.balance > 0 ? (
+                          {isAdmin && m.balance > 0 ? (
                             <Button
                               variant="primary"
                               size="sm"

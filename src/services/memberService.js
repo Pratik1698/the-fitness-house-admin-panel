@@ -168,10 +168,18 @@ export async function getActiveMembers() {
       currentSubscriptionId: row.current_subscription_id || '',
       startDate: row.start_date || '',
       expiryDate: row.expiry_date || '',
-      totalFee: Number(row.total_liability ?? row.plan_price ?? 0),
-      amountPaid: Number(row.amount_paid ?? 0),
-      balance: Number(row.balance ?? 0),
-      paymentStatus: row.payment_status || 'unpaid',
+      totalFee: (row.total_liability !== null && row.total_liability !== undefined)
+        ? Number(row.total_liability)
+        : (row.plan_price !== null && row.plan_price !== undefined)
+          ? Number(row.plan_price)
+          : null,
+      amountPaid: (row.amount_paid !== null && row.amount_paid !== undefined)
+        ? Number(row.amount_paid)
+        : null,
+      balance: (row.balance !== null && row.balance !== undefined)
+        ? Number(row.balance)
+        : null,
+      paymentStatus: row.payment_status || null,
       status: row.subscription_status || 'active',
       joinDate: row.start_date || '',
       totalCheckins: 0,
