@@ -5,13 +5,13 @@ export function Tabs({ tabs, defaultTab, className = '' }) {
   const activeTab = tabs.find(t => t.id === active);
 
   return (
-    <div className={className}>
-      <div className="flex items-center gap-1 border-b border-[#E1E6E9] mb-4">
+    <div className={`min-w-0 max-w-full ${className}`}>
+      <div className="flex items-center gap-1 border-b border-[#E1E6E9] mb-4 overflow-x-auto min-w-0 max-w-full scrollbar-thin">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActive(tab.id)}
-            className={`px-4 py-2.5 text-sm font-medium transition-colors relative cursor-pointer ${
+            className={`px-4 py-2.5 text-sm font-medium transition-colors relative cursor-pointer shrink-0 whitespace-nowrap ${
               active === tab.id
                 ? 'text-[#16845B]'
                 : 'text-[#64717B] hover:text-[#25313B]'

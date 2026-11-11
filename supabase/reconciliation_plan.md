@@ -1,3 +1,10 @@
+> **HISTORICAL / ARCHIVAL ARTIFACT NOTICE**
+> **Status:** DEPRECATED & FULLY RECONCILED
+> **Authoritative Data Store:** Supabase PostgreSQL (`xfagvgypgboplonokntk`)
+> **Effective Date:** November 2026
+>
+> This reconciliation protocol is preserved strictly for historical audit trail documentation. The transition from legacy prototype browser localStorage to authoritative Supabase PostgreSQL 17 has been completed. All runtime operations, mutations, financial ledgers, and authentication flows exclusively target PostgreSQL database tables and verified RPC functions. No browser localStorage data is treated as authoritative.
+
 # LocalStorage to PostgreSQL Reconciliation Plan
 **Project:** The Fitness House Gym Management Admin Panel  
 **Stage:** Phase 7C Pre-Staging Data Migration Protocol

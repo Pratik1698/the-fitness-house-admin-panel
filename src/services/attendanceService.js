@@ -6,8 +6,32 @@
  * and attendance history retrieval backed by public.checkins and public.v_attendance_logs.
  */
 
-import { supabase, isSupabaseConfigured } from './supabaseClient';
-import { getLocalDateString } from '../utils/memberUtils';
+import { supabase as defaultSupabase, isSupabaseConfigured as defaultIsConfigured } from './supabaseClient.js';
+import { getLocalDateString } from '../utils/memberUtils.js';
+
+// ---------------------------------------------------------------------------
+// Testing Client Injection Support
+// ---------------------------------------------------------------------------
+let _injectedClient = null;
+let _injectedConfigured = null;
+
+export function setSupabaseClientForTesting(client, configured = true) {
+  _injectedClient = client;
+  _injectedConfigured = configured;
+}
+
+export function resetSupabaseClientForTesting() {
+  _injectedClient = null;
+  _injectedConfigured = null;
+}
+
+function getActiveClient() {
+  return _injectedClient || defaultSupabase;
+}
+
+function getIsConfigured() {
+  return _injectedConfigured !== null ? _injectedConfigured : defaultIsConfigured;
+}
 
 /**
  * Normalizes a raw database attendance log record for UI consumption.
@@ -65,7 +89,7 @@ function normalizeAttendanceRecord(row) {
  * @returns {Promise<{ data: Array|null, error: Error|null }>}
  */
 export async function getAttendanceLogs(options = {}) {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured.'),
@@ -73,7 +97,7 @@ export async function getAttendanceLogs(options = {}) {
   }
 
   try {
-    let query = supabase
+    let query = getActiveClient()
       .from('v_attendance_logs')
       .select('*')
       .order('checked_in_at', { ascending: false });
@@ -122,7 +146,7 @@ export async function getAttendanceLogs(options = {}) {
  * @returns {Promise<{ data: object|null, error: Error|null }>}
  */
 export async function recordCheckin({ memberId, notes = '' }) {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured.'),
@@ -137,7 +161,7 @@ export async function recordCheckin({ memberId, notes = '' }) {
   }
 
   try {
-    const { data, error } = await supabase.rpc('record_member_checkin', {
+    const { data, error } = await getActiveClient().rpc('record_member_checkin', {
       p_member_id: memberId,
       p_notes: notes ? notes.trim() : null,
     });
@@ -169,7 +193,7 @@ export async function recordCheckin({ memberId, notes = '' }) {
  * @returns {Promise<{ data: object|null, error: Error|null }>}
  */
 export async function recordCheckout({ checkinId, notes = '' }) {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured.'),
@@ -184,7 +208,7 @@ export async function recordCheckout({ checkinId, notes = '' }) {
   }
 
   try {
-    const { data, error } = await supabase.rpc('record_member_checkout', {
+    const { data, error } = await getActiveClient().rpc('record_member_checkout', {
       p_checkin_id: checkinId,
       p_notes: notes ? notes.trim() : null,
     });
@@ -216,7 +240,7 @@ export async function recordCheckout({ checkinId, notes = '' }) {
  * @returns {Promise<{ data: object|null, error: Error|null }>}
  */
 export async function cancelCheckin({ checkinId, reason = '' }) {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured.'),
@@ -231,7 +255,7 @@ export async function cancelCheckin({ checkinId, reason = '' }) {
   }
 
   try {
-    const { data, error } = await supabase.rpc('cancel_member_checkin', {
+    const { data, error } = await getActiveClient().rpc('cancel_member_checkin', {
       p_checkin_id: checkinId,
       p_reason: reason ? reason.trim() : null,
     });

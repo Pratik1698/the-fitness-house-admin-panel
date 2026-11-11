@@ -406,7 +406,7 @@ export default function Notifications() {
           </Badge>
         }
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               size="sm"
@@ -670,7 +670,7 @@ export default function Notifications() {
       </div>
 
       {/* Navigation Tabs */}
-      <div className="flex items-center gap-2 border-b border-[#E1E6E9] pb-px overflow-x-auto">
+      <div className="flex items-center gap-2 border-b border-[#E1E6E9] pb-px overflow-x-auto min-w-0 max-w-full scrollbar-thin">
         {[
           { id: 'history', label: 'Alerts & Reminders Queue', count: (notifications || []).length },
           { id: 'sequence', label: 'Automated Expiry Sequence', count: sequence.length },

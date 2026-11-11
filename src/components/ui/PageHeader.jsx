@@ -1,8 +1,8 @@
 export function PageHeader({ title, description, actions, badge, className = '' }) {
   return (
-    <div className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 pb-1 ${className}`}>
-      <div className="space-y-1">
-        <div className="flex items-center gap-2.5">
+    <div className={`flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 pb-1 min-w-0 max-w-full ${className}`}>
+      <div className="space-y-1 min-w-0 flex-1">
+        <div className="flex items-center gap-2.5 flex-wrap">
           <h1 className="text-2xl lg:text-[26px] font-bold text-[#25313B] tracking-tight leading-tight">
             {title}
           </h1>
@@ -16,7 +16,7 @@ export function PageHeader({ title, description, actions, badge, className = '' 
       </div>
 
       {actions && (
-        <div className="flex items-center gap-2.5 flex-wrap shrink-0">
+        <div className="flex items-center gap-2 flex-wrap min-w-0 max-w-full">
           {actions}
         </div>
       )}

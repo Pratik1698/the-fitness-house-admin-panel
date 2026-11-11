@@ -268,13 +268,13 @@ export default function Payments() {
   }, [selectedReceipt, members]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 max-w-full">
       <PageHeader
         title="Payments & Collections"
         description="Audit ledger receipts, record dues collections, and generate printed member receipts."
         badge={<Badge variant="success">{formatINR(todayCollection)} Today</Badge>}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button
               variant="secondary"
               icon={RotateCcw}

@@ -6,7 +6,14 @@ import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { StatusBadge, Badge } from '../components/ui/Badge';
 import { Tabs } from '../components/ui/Tabs';
-import { getLocalDateString, getExpiryClassification, formatINR } from '../utils/memberUtils';
+import {
+  getLocalDateString,
+  getExpiryClassification,
+  formatINR,
+  isPtEndingSoon,
+  isPendingDuesVisible,
+  isFollowupOverdue,
+} from '../utils/memberUtils';
 import {
   Clock, XCircle, CreditCard, Dumbbell, PhoneCall,
   ArrowRight, AlertTriangle, CheckCircle2, RotateCw
@@ -57,22 +64,22 @@ export default function Attention() {
 
   const pendingPayments = useMemo(() => {
     return members
-      .filter(m => Number(m.balance) > 0)
+      .filter(m => isPendingDuesVisible(isAdmin, m))
       .sort((a, b) => Number(b.balance) - Number(a.balance));
-  }, [members]);
+  }, [members, isAdmin]);
 
   const ptEnding = useMemo(() => {
     return ptClients
-      .filter(c => c.status === 'active' && Number(c.remainingSessions) <= 3)
+      .filter(c => isPtEndingSoon(c))
       .sort((a, b) => Number(a.remainingSessions) - Number(b.remainingSessions));
   }, [ptClients]);
 
   const followupsDue = useMemo(() => {
     const validMemberIds = new Set(members.map(m => m.id));
     return followups
-      .filter(f => f.status !== 'completed' && f.status !== 'cancelled' && (validMemberIds.size === 0 || validMemberIds.has(f.memberId)))
+      .filter(f => isFollowupOverdue(f, todayStr) && (validMemberIds.size === 0 || validMemberIds.has(f.memberId)))
       .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  }, [followups, members]);
+  }, [followups, members, todayStr]);
 
   const totalActionItems =
     expiringMembers.length +
@@ -321,7 +328,7 @@ export default function Attention() {
         <div className="space-y-2">
           {followupsDue.length > 0 ? (
             followupsDue.map(f => {
-              const isOverdue = f.status === 'overdue' || (f.dueDate < todayStr && f.status !== 'completed');
+              const isOverdue = isFollowupOverdue(f, todayStr);
               return (
                 <div
                   key={f.id}

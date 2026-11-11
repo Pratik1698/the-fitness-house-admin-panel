@@ -1,24 +1,24 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Dumbbell, Mail, CheckCircle, AlertCircle, RefreshCw, LogOut, ShieldAlert } from 'lucide-react';
 import { AppProvider, useAuth } from './context/AppContext';
 import { AppLayout } from './components/layout/AppLayout';
 import { Button } from './components/ui/Button';
 
-// Module pages
-import Dashboard from './pages/Dashboard';
-import Members from './pages/Members';
-import MemberProfile from './pages/MemberProfile';
-import PersonalTraining from './pages/PersonalTraining';
-import Payments from './pages/Payments';
-import CheckIns from './pages/CheckIns';
-import Attention from './pages/Attention';
-import Notifications from './pages/Notifications';
-import Followups from './pages/Followups';
-import Reports from './pages/Reports';
-import Settings from './pages/Settings';
-import Login from './pages/Login';
-import ResetPassword from './pages/ResetPassword';
+// Route-level lazy loading for performance & code-splitting
+const Dashboard = lazy(() => import('./pages/Dashboard'));
+const Members = lazy(() => import('./pages/Members'));
+const MemberProfile = lazy(() => import('./pages/MemberProfile'));
+const PersonalTraining = lazy(() => import('./pages/PersonalTraining'));
+const Payments = lazy(() => import('./pages/Payments'));
+const CheckIns = lazy(() => import('./pages/CheckIns'));
+const Attention = lazy(() => import('./pages/Attention'));
+const Notifications = lazy(() => import('./pages/Notifications'));
+const Followups = lazy(() => import('./pages/Followups'));
+const Reports = lazy(() => import('./pages/Reports'));
+const Settings = lazy(() => import('./pages/Settings'));
+const Login = lazy(() => import('./pages/Login'));
+const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 
 /**
  * Branded loading screen displayed during initial session verification
@@ -234,27 +234,29 @@ export default function App() {
   return (
     <AppProvider>
       <BrowserRouter>
-        <Routes>
-          {/* Public & Authentication Routes */}
-          <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
-          <Route path="/reset-password" element={<ResetPassword />} />
+        <Suspense fallback={<AuthLoadingScreen />}>
+          <Routes>
+            {/* Public & Authentication Routes */}
+            <Route path="/login" element={<PublicRoute><Login /></PublicRoute>} />
+            <Route path="/reset-password" element={<ResetPassword />} />
 
-          {/* Protected Main App Layout routes */}
-          <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
-          <Route path="/members" element={<ProtectedRoute><Members /></ProtectedRoute>} />
-          <Route path="/members/:id" element={<ProtectedRoute><MemberProfile /></ProtectedRoute>} />
-          <Route path="/personal-training" element={<ProtectedRoute><PersonalTraining /></ProtectedRoute>} />
-          <Route path="/payments" element={<ProtectedRoute requiredRole="admin"><Payments /></ProtectedRoute>} />
-          <Route path="/checkins" element={<ProtectedRoute><CheckIns /></ProtectedRoute>} />
-          <Route path="/attention" element={<ProtectedRoute><Attention /></ProtectedRoute>} />
-          <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
-          <Route path="/followups" element={<ProtectedRoute><Followups /></ProtectedRoute>} />
-          <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
-          <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
+            {/* Protected Main App Layout routes */}
+            <Route path="/" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+            <Route path="/members" element={<ProtectedRoute><Members /></ProtectedRoute>} />
+            <Route path="/members/:id" element={<ProtectedRoute><MemberProfile /></ProtectedRoute>} />
+            <Route path="/personal-training" element={<ProtectedRoute><PersonalTraining /></ProtectedRoute>} />
+            <Route path="/payments" element={<ProtectedRoute requiredRole="admin"><Payments /></ProtectedRoute>} />
+            <Route path="/checkins" element={<ProtectedRoute><CheckIns /></ProtectedRoute>} />
+            <Route path="/attention" element={<ProtectedRoute><Attention /></ProtectedRoute>} />
+            <Route path="/notifications" element={<ProtectedRoute><Notifications /></ProtectedRoute>} />
+            <Route path="/followups" element={<ProtectedRoute><Followups /></ProtectedRoute>} />
+            <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+            <Route path="/settings" element={<ProtectedRoute><Settings /></ProtectedRoute>} />
 
-          {/* Fallback */}
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
+            {/* Fallback */}
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </BrowserRouter>
     </AppProvider>
   );

@@ -339,3 +339,46 @@ export function formatISTDateTime(isoString) {
     hour12: true,
   }) + ' IST';
 }
+
+/**
+ * Evaluates whether a Personal Training client's package is ending soon.
+ * True when the client status is 'active' AND remaining sessions is <= threshold (default 3).
+ *
+ * @param {object|null|undefined} client - PT client object { status, remainingSessions }
+ * @param {number} [threshold=3] - Maximum remaining sessions considered ending soon
+ * @returns {boolean}
+ */
+export function isPtEndingSoon(client, threshold = 3) {
+  if (!client || client.status !== 'active') return false;
+  const remaining = Number(client.remainingSessions);
+  return !Number.isNaN(remaining) && remaining <= threshold;
+}
+
+/**
+ * Determines whether pending dues are visible for a member based on role authorization
+ * and positive outstanding balance. Non-admin staff callers must never view dues.
+ *
+ * @param {boolean} isAdmin - Whether current user has admin role
+ * @param {object|null|undefined} member - Member object { balance }
+ * @returns {boolean}
+ */
+export function isPendingDuesVisible(isAdmin, member) {
+  if (!isAdmin || !member) return false;
+  const balance = Number(member.balance);
+  return !Number.isNaN(balance) && balance > 0;
+}
+
+/**
+ * Determines whether a member followup task is overdue.
+ * True when task status is NOT 'completed' AND NOT 'cancelled'
+ * AND (dueDate is before reference date OR status is 'overdue').
+ *
+ * @param {object|null|undefined} followup - Follow-up task object { status, dueDate }
+ * @param {string} [referenceDateStr] - YYYY-MM-DD reference date (defaults to today)
+ * @returns {boolean}
+ */
+export function isFollowupOverdue(followup, referenceDateStr) {
+  if (!followup || followup.status === 'completed' || followup.status === 'cancelled') return false;
+  const todayStr = referenceDateStr || getLocalDateString(new Date());
+  return followup.status === 'overdue' || Boolean(followup.dueDate && followup.dueDate < todayStr);
+}

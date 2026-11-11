@@ -18,6 +18,13 @@
  *    database read-back response, never fabricated from unsaved form state.
  */
 
+// Ensure import.meta.env is safe in Node environments without Vite
+if (typeof import.meta !== 'undefined' && !import.meta.env) {
+  import.meta.env = {};
+}
+
+import { supabase, isSupabaseConfigured } from './supabaseClient.js';
+
 // ---------------------------------------------------------------------------
 // Client Provider (Lazy-loaded to support both Vite browser & Node test runner)
 // ---------------------------------------------------------------------------
@@ -38,23 +45,13 @@ export function resetSupabaseClientForTesting() {
 async function getClient(client) {
   if (client) return client;
   if (_injectedClient) return _injectedClient;
-  try {
-    const mod = await import('./supabaseClient.js');
-    return mod.supabase;
-  } catch {
-    return null;
-  }
+  return supabase;
 }
 
 async function getConfigured(configured) {
   if (configured !== undefined && configured !== null) return configured;
   if (_injectedConfigured !== null) return _injectedConfigured;
-  try {
-    const mod = await import('./supabaseClient.js');
-    return mod.isSupabaseConfigured;
-  } catch {
-    return false;
-  }
+  return isSupabaseConfigured;
 }
 
 // ---------------------------------------------------------------------------

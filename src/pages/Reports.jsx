@@ -25,6 +25,7 @@ import {
 import {
   computePlanDetailsTableData,
   computePlanDistributionData,
+  isDateInRange as checkDateInRange,
 } from '../utils/analyticsUtils';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -121,9 +122,7 @@ export default function Reports() {
     }
 
     if (dateRangePreset === 'custom') {
-      if (customStart && dateStr < customStart) return false;
-      if (customEnd && dateStr > customEnd) return false;
-      return true;
+      return checkDateInRange(dateStr, customStart, customEnd);
     }
 
     return true;
@@ -632,7 +631,7 @@ export default function Reports() {
       )}
 
       {/* Report Module Tabs */}
-      <div className="flex items-center gap-1 border-b border-[#E1E6E9] pb-px overflow-x-auto bg-white px-2 rounded-t-xl">
+      <div className="flex items-center gap-1 border-b border-[#E1E6E9] pb-px overflow-x-auto min-w-0 max-w-full bg-white px-2 rounded-t-xl scrollbar-thin">
         {reportTabs.map(tab => (
           <button
             key={tab.id}

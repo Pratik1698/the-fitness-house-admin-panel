@@ -129,6 +129,7 @@ export function TopNav({ onMenuToggle }) {
             <button
               onClick={() => setSearchOpen(!searchOpen)}
               className="sm:hidden p-2 rounded-xl hover:bg-[#F5F7F8] text-[#64717B] cursor-pointer"
+              aria-label="Toggle member search"
             >
               <Search size={18} />
             </button>

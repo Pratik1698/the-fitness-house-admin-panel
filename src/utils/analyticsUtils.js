@@ -246,3 +246,19 @@ export function computePlanDistributionData(planDetailsTableData = [], activeMem
     color: PLAN_PALETTE_COLORS[index % PLAN_PALETTE_COLORS.length],
   }));
 }
+
+/**
+ * Checks whether a given ISO date string (YYYY-MM-DD) falls within an optional date range.
+ * Both boundaries are inclusive. If a boundary is omitted/null/undefined, that side is unbounded.
+ *
+ * @param {string} dateStr - Target date string in YYYY-MM-DD format
+ * @param {string|null} [startDate] - Inclusive start date string (YYYY-MM-DD)
+ * @param {string|null} [endDate] - Inclusive end date string (YYYY-MM-DD)
+ * @returns {boolean}
+ */
+export function isDateInRange(dateStr, startDate = null, endDate = null) {
+  if (!dateStr) return false;
+  const afterStart = !startDate || dateStr >= startDate;
+  const beforeEnd = !endDate || dateStr <= endDate;
+  return afterStart && beforeEnd;
+}

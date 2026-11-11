@@ -280,7 +280,7 @@ export default function PersonalTraining() {
           </div>
 
           {/* PT Clients Table */}
-          <div className="overflow-x-auto border border-[#E1E6E9] rounded-xl bg-white">
+          <div className="overflow-x-auto min-w-0 max-w-full border border-[#E1E6E9] rounded-xl bg-white">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#E1E6E9] bg-[#F5F7F8]/60">
@@ -512,7 +512,7 @@ export default function PersonalTraining() {
           </div>
 
           {/* Sessions Table */}
-          <div className="overflow-x-auto border border-[#E1E6E9] rounded-xl bg-white">
+          <div className="overflow-x-auto min-w-0 max-w-full border border-[#E1E6E9] rounded-xl bg-white">
             <table className="w-full">
               <thead>
                 <tr className="border-b border-[#E1E6E9] bg-[#F5F7F8]/60">
@@ -810,14 +810,14 @@ export default function PersonalTraining() {
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 min-w-0 max-w-full">
       {/* Page Header */}
       <PageHeader
         title="Personal Training Hub"
         description="Manage trainer assignments, active PT packages, session tracking ledgers, and package renewals."
         badge={<Badge variant="success">{activeClients.length} Active Clients</Badge>}
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Button
               variant="secondary"
               icon={Calendar}
@@ -888,7 +888,7 @@ export default function PersonalTraining() {
       </div>
 
       {/* Main Tabs Card */}
-      <Card>
+      <Card className="min-w-0 max-w-full">
         <Tabs tabs={tabs} defaultTab={activeTab} />
       </Card>
 

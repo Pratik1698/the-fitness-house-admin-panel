@@ -18,6 +18,7 @@ export default function Login() {
     login,
     isAuthenticated,
     authLoading,
+    authError,
     pendingInvitation,
     acceptStaffInvitation,
     logout,
@@ -55,6 +56,7 @@ export default function Login() {
   const [verifyingInvite, setVerifyingInvite] = useState(false);
   const [acceptingInvitation, setAcceptingInvitation] = useState(false);
   const [error, setError] = useState(null);
+  const displayError = error || authError;
 
   // Handle invitation or auth callback parameters (errors, token hashes, or implicit sessions)
   useEffect(() => {
@@ -326,13 +328,13 @@ export default function Login() {
                 </p>
               </div>
 
-              {error && (
+              {displayError && (
                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 space-y-2">
                   <div className="flex items-start gap-2">
                     <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5" />
                     <div className="flex-1">
                       <span className="font-semibold block">Authentication Notice</span>
-                      <span>{error}</span>
+                      <span>{displayError}</span>
                     </div>
                   </div>
 

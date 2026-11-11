@@ -1,4 +1,4 @@
-import { supabase, isSupabaseConfigured } from './supabaseClient';
+import { supabase as defaultSupabase, isSupabaseConfigured as defaultIsConfigured } from './supabaseClient.js';
 
 /**
  * Payment Service
@@ -8,6 +8,30 @@ import { supabase, isSupabaseConfigured } from './supabaseClient';
  * dues collection RPCs, and financial transactions in Supabase.
  */
 
+// ---------------------------------------------------------------------------
+// Testing Client Injection Support
+// ---------------------------------------------------------------------------
+let _injectedClient = null;
+let _injectedConfigured = null;
+
+export function setSupabaseClientForTesting(client, configured = true) {
+  _injectedClient = client;
+  _injectedConfigured = configured;
+}
+
+export function resetSupabaseClientForTesting() {
+  _injectedClient = null;
+  _injectedConfigured = null;
+}
+
+function getActiveClient() {
+  return _injectedClient || defaultSupabase;
+}
+
+function getIsConfigured() {
+  return _injectedConfigured !== null ? _injectedConfigured : defaultIsConfigured;
+}
+
 /**
  * Fetches all payment transactions from public.payments joined with
  * members and member_subscriptions, ordered by created_at descending.
@@ -15,7 +39,7 @@ import { supabase, isSupabaseConfigured } from './supabaseClient';
  * @returns {Promise<{ data: Array<object>|null, error: Error|null }>}
  */
 export async function getPayments() {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured. Please check your environment configuration.'),
@@ -23,7 +47,7 @@ export async function getPayments() {
   }
 
   try {
-    const { data, error } = await supabase
+    const { data, error } = await getActiveClient()
       .from('payments')
       .select(`
         id,
@@ -114,7 +138,7 @@ export async function getPayments() {
  * @returns {Promise<{ data: object|null, error: Error|null, idempotencyKey: string }>}
  */
 export async function recordDuesPayment(payload) {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured. Please check your environment configuration.'),
@@ -147,7 +171,7 @@ export async function recordDuesPayment(payload) {
   };
 
   try {
-    const { data, error } = await supabase.rpc('record_dues_payment', rpcParams);
+    const { data, error } = await getActiveClient().rpc('record_dues_payment', rpcParams);
 
     if (error) {
       console.error('[paymentService.recordDuesPayment] RPC Error:', error);
@@ -200,7 +224,7 @@ export async function recordDuesPayment(payload) {
  * @returns {Promise<{ data: object|null, error: Error|null, idempotencyKey: string }>}
  */
 export async function recordPtDuesPayment(payload) {
-  if (!isSupabaseConfigured) {
+  if (!getIsConfigured()) {
     return {
       data: null,
       error: new Error('Supabase client is not configured. Please check your environment configuration.'),
@@ -233,7 +257,7 @@ export async function recordPtDuesPayment(payload) {
   };
 
   try {
-    const { data, error } = await supabase.rpc('record_pt_dues_payment', rpcParams);
+    const { data, error } = await getActiveClient().rpc('record_pt_dues_payment', rpcParams);
 
     if (error) {
       console.error('[paymentService.recordPtDuesPayment] RPC Error:', error);
