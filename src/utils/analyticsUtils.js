@@ -262,3 +262,190 @@ export function isDateInRange(dateStr, startDate = null, endDate = null) {
   const beforeEnd = !endDate || dateStr <= endDate;
   return afterStart && beforeEnd;
 }
+
+/**
+ * Computes unified attendance metrics (visit count, latest check-in timestamp)
+ * for all members based on actual check-in records.
+ *
+ * Rules:
+ * - Excludes cancelled check-in records (status === 'cancelled' or rawStatus === 'cancelled').
+ * - Matches check-ins to members by memberId with memberCode fallback without double counting.
+ * - Safely ignores missing, null, and unmatched member identifiers.
+ * - Resolves the latest valid check-in date/time for each member across various timestamp formats.
+ * - Provides consistent visit counts across all reporting widgets.
+ *
+ * @param {object} params
+ * @param {Array<object>} [params.members=[]] - Members directory
+ * @param {Array<object>} [params.checkins=[]] - Check-in records
+ * @param {Function} [params.isDateInRange] - Optional date range predicate function
+ * @returns {Array<object>} Decorated members with { visitCount, lastCheckinTime, lastCheckinDate }
+ */
+export function computeMemberAttendanceMetrics({ members = [], checkins = [], isDateInRange: dateFilter } = {}) {
+  if (!Array.isArray(members)) return [];
+
+  const validMembers = members.filter(Boolean);
+
+  // 1. Build member lookup indexes for robust, unambiguous identity matching
+  const memberIdSet = new Set();
+  const codeToIdMap = new Map();
+
+  validMembers.forEach(m => {
+    if (m && m.id) {
+      memberIdSet.add(m.id);
+      if (m.member_code) {
+        codeToIdMap.set(m.member_code, m.id);
+      }
+    }
+  });
+
+  // 2. Exclude cancelled check-in records and apply optional period filter
+  let validCheckins = Array.isArray(checkins)
+    ? checkins.filter(c => c && c.status !== 'cancelled' && c.rawStatus !== 'cancelled')
+    : [];
+
+  if (typeof dateFilter === 'function') {
+    validCheckins = validCheckins.filter(c => dateFilter(c.date));
+  }
+
+  // 3. Aggregate counts and determine latest valid check-in per member
+  const attendanceMap = new Map();
+
+  validCheckins.forEach(c => {
+    if (!c) return;
+
+    // Resolve target member ID:
+    // a) Direct memberId match
+    // b) Check if memberId is a member_code
+    // c) Fallback to memberCode
+    let targetMemberId = null;
+    if (c.memberId && memberIdSet.has(c.memberId)) {
+      targetMemberId = c.memberId;
+    } else if (c.memberId && codeToIdMap.has(c.memberId)) {
+      targetMemberId = codeToIdMap.get(c.memberId);
+    } else if (c.memberCode && codeToIdMap.has(c.memberCode)) {
+      targetMemberId = codeToIdMap.get(c.memberCode);
+    } else if (c.memberId) {
+      targetMemberId = c.memberId;
+    } else if (c.memberCode) {
+      targetMemberId = c.memberCode;
+    }
+
+    if (!targetMemberId) return; // Skip missing/null identifiers
+
+    const existing = attendanceMap.get(targetMemberId) || {
+      count: 0,
+      latestCheckin: null,
+      latestTimestamp: -1,
+    };
+
+    existing.count += 1;
+
+    // Resolve epoch timestamp for recency comparison across ISO string, epoch number, and local date/time
+    let timestamp = -1;
+    if (c.checkedInAt) {
+      if (typeof c.checkedInAt === 'number') {
+        timestamp = c.checkedInAt;
+      } else {
+        const parsed = new Date(c.checkedInAt).getTime();
+        if (!isNaN(parsed)) timestamp = parsed;
+      }
+    }
+    if (timestamp === -1 && c.date) {
+      if (c.time) {
+        const parsed = new Date(`${c.date} ${c.time}`).getTime();
+        if (!isNaN(parsed)) timestamp = parsed;
+      }
+      if (timestamp === -1) {
+        const dateParsed = new Date(c.date).getTime();
+        if (!isNaN(dateParsed)) timestamp = dateParsed;
+      }
+    }
+
+    if (!existing.latestCheckin || timestamp >= existing.latestTimestamp) {
+      existing.latestCheckin = c;
+      existing.latestTimestamp = timestamp;
+    }
+
+    attendanceMap.set(targetMemberId, existing);
+  });
+
+  // 4. Decorate members with consistent visitCount and lastCheckinTime
+  return validMembers.map(m => {
+    const stats = attendanceMap.get(m.id) || (m.member_code ? attendanceMap.get(m.member_code) : null);
+    const loggedCount = stats ? stats.count : 0;
+    const totalVisits = Math.max(Number(m.totalCheckins) || 0, loggedCount);
+    const lastCheckin = stats ? stats.latestCheckin : null;
+
+    let lastCheckinTime = '—';
+    if (lastCheckin) {
+      if (lastCheckin.date && lastCheckin.time) {
+        lastCheckinTime = `${lastCheckin.date} (${lastCheckin.time})`;
+      } else if (lastCheckin.date) {
+        lastCheckinTime = lastCheckin.date;
+      } else if (lastCheckin.checkedInAt) {
+        try {
+          const d = new Date(lastCheckin.checkedInAt);
+          lastCheckinTime = d.toISOString().split('T')[0];
+        } catch {
+          lastCheckinTime = '—';
+        }
+      }
+    }
+
+    return {
+      ...m,
+      visitCount: totalVisits,
+      lastCheckinTime,
+      lastCheckinDate: lastCheckin?.date || null,
+    };
+  });
+}
+
+/**
+ * Computes top frequent visitors from actual check-in records.
+ *
+ * @param {object} params
+ * @param {Array<object>} params.members - Members directory
+ * @param {Array<object>} params.checkins - Check-in records
+ * @param {number} [params.limit=5] - Number of top members to return
+ * @param {Function} [params.isDateInRange] - Optional period filter
+ * @returns {Array<object>} Top members sorted descending by visitCount
+ */
+export function computeTopFrequentMembers({ members = [], checkins = [], limit = 5, isDateInRange: dateFilter } = {}) {
+  const decorated = computeMemberAttendanceMetrics({ members, checkins, isDateInRange: dateFilter });
+  return decorated
+    .sort((a, b) => {
+      if (b.visitCount !== a.visitCount) {
+        return b.visitCount - a.visitCount;
+      }
+      return (a.name || '').localeCompare(b.name || '');
+    })
+    .slice(0, limit);
+}
+
+/**
+ * Computes active members with low activity (< threshold visits, default < 3 visits).
+ * Sorted ascending by visitCount so members with 0 visits are prioritized first.
+ *
+ * @param {object} params
+ * @param {Array<object>} params.members - Members directory
+ * @param {Array<object>} params.checkins - Check-in records
+ * @param {number} [params.threshold=3] - Exclusive upper bound for visits (< threshold)
+ * @param {number} [params.limit=5] - Number of members to return
+ * @param {Function} [params.isDateInRange] - Optional period filter
+ * @returns {Array<object>} Low activity members sorted ascending by visitCount
+ */
+export function computeLowActivityMembers({ members = [], checkins = [], threshold = 3, limit = 5, isDateInRange: dateFilter } = {}) {
+  const decorated = computeMemberAttendanceMetrics({ members, checkins, isDateInRange: dateFilter });
+  return decorated
+    .filter(m => m.status === 'active' && m.visitCount < threshold)
+    .sort((a, b) => {
+      // Primary: ascending by visit count (0 visits first, then 1, then 2)
+      if (a.visitCount !== b.visitCount) {
+        return a.visitCount - b.visitCount;
+      }
+      // Secondary: alphabetically by name for deterministic order
+      return (a.name || '').localeCompare(b.name || '');
+    })
+    .slice(0, limit);
+}

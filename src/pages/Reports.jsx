@@ -26,6 +26,8 @@ import {
   computePlanDetailsTableData,
   computePlanDistributionData,
   isDateInRange as checkDateInRange,
+  computeTopFrequentMembers,
+  computeLowActivityMembers,
 } from '../utils/analyticsUtils';
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -352,36 +354,15 @@ export default function Reports() {
     return new Set(todayCheckinsList.map(c => c.memberId)).size;
   }, [todayCheckinsList]);
 
-  // Most frequent visitors from actual check-in records
+  // Most frequent visitors from actual check-in records (shared calculation)
   const topFrequentMembers = useMemo(() => {
-    const checkinCounts = {};
-    checkins.forEach(c => {
-      if (c.memberId) {
-        checkinCounts[c.memberId] = (checkinCounts[c.memberId] || 0) + 1;
-      }
-    });
-
-    return [...members]
-      .map(m => {
-        const actualLogged = checkinCounts[m.id] || 0;
-        const totalVisits = Math.max(m.totalCheckins || 0, actualLogged);
-        const lastCheckin = checkins.find(c => c.memberId === m.id);
-        return {
-          ...m,
-          visitCount: totalVisits,
-          lastCheckinTime: lastCheckin ? `${lastCheckin.date} (${lastCheckin.time})` : '—',
-        };
-      })
-      .sort((a, b) => b.visitCount - a.visitCount)
-      .slice(0, 5);
+    return computeTopFrequentMembers({ members, checkins, limit: 5 });
   }, [members, checkins]);
 
-  // Low activity members (<3 visits among active)
+  // Low activity members (<3 visits among active, ascending sort, shared calculation)
   const lowActivityMembers = useMemo(() => {
-    return members
-      .filter(m => m.status === 'active' && (m.totalCheckins || 0) <= 2)
-      .slice(0, 5);
-  }, [members]);
+    return computeLowActivityMembers({ members, checkins, threshold: 3, limit: 5 });
+  }, [members, checkins]);
 
   // Filtered check-in logs
   const filteredAttendanceLogs = useMemo(() => {
@@ -1277,7 +1258,7 @@ export default function Reports() {
                       </div>
                     </div>
                     <div className="text-right">
-                      <p className="text-sm font-bold text-[#16845B]">{m.visitCount} visits</p>
+                      <p className="text-sm font-bold text-[#16845B]">{m.visitCount} {m.visitCount === 1 ? 'visit' : 'visits'}</p>
                       <p className="text-[11px] text-[#64717B]">Regular Athlete</p>
                     </div>
                   </div>
@@ -1300,7 +1281,7 @@ export default function Reports() {
                       <p className="text-xs text-[#64717B]">{m.phone} · {m.plan}</p>
                     </div>
                     <div className="text-right">
-                      <Badge variant="warning">{m.totalCheckins || 0} visits</Badge>
+                      <Badge variant="warning">{m.visitCount} {m.visitCount === 1 ? 'visit' : 'visits'}</Badge>
                       <p className="text-xs text-[#A66A00] mt-1 font-medium">Re-engagement needed</p>
                     </div>
                   </div>
