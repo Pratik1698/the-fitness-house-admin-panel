@@ -8,6 +8,7 @@ import { Tabs } from '../components/ui/Tabs';
 import { RenewMembershipModal } from '../components/shared/RenewMembershipModal';
 import { EditMemberModal } from '../components/shared/EditMemberModal';
 import { PaymentReceiptModal } from '../components/shared/PaymentReceiptModal';
+import { WhatsAppConfirmationModal } from '../components/shared/WhatsAppConfirmationModal';
 import {
   getMembershipStatus,
   getDaysDifference,
@@ -17,16 +18,28 @@ import {
 import {
   ArrowLeft, LogIn, IndianRupee, RotateCw, Edit3,
   User, Calendar, CreditCard, Activity, Phone, Mail, MapPin, CheckCircle2,
-  Printer
+  Printer, MessageSquare
 } from 'lucide-react';
 
 export default function MemberProfile() {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { members, payments, checkins, ptClients, ptSessions, followups, addCheckin, checkoutMember, isAdmin } = useApp();
+  const {
+    members,
+    payments,
+    checkins,
+    ptClients,
+    ptSessions,
+    followups,
+    addCheckin,
+    checkoutMember,
+    isAdmin,
+    membershipPlans = [],
+  } = useApp();
   const [showRenewModal, setShowRenewModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [selectedReceiptPayment, setSelectedReceiptPayment] = useState(null);
   const [notice, setNotice] = useState(null);
 
@@ -361,6 +374,17 @@ export default function MemberProfile() {
               </Button>
             )}
             <Button size="sm" variant="secondary" icon={RotateCw} onClick={() => setShowRenewModal(true)}>Renew</Button>
+            {isAdmin && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={MessageSquare}
+                onClick={() => setShowWhatsAppModal(true)}
+                title="Send WhatsApp Registration Confirmation"
+              >
+                WhatsApp Confirmation
+              </Button>
+            )}
           </div>
         </div>
       </Card>
@@ -414,6 +438,21 @@ export default function MemberProfile() {
           onClose={() => setSelectedReceiptPayment(null)}
           payment={selectedReceiptPayment}
           member={member}
+        />
+      )}
+
+      {/* WhatsApp Registration Confirmation Modal */}
+      {member && (
+        <WhatsAppConfirmationModal
+          isOpen={showWhatsAppModal}
+          onClose={() => setShowWhatsAppModal(false)}
+          member={member}
+          membershipPlans={membershipPlans}
+          isAdmin={isAdmin}
+          onDispatched={() => {
+            setNotice(`WhatsApp chat opened for ${member.name}. Review and click Send in WhatsApp.`);
+            setTimeout(() => setNotice(null), 6000);
+          }}
         />
       )}
     </div>

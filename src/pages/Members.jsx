@@ -8,6 +8,7 @@ import { Input, Select, SearchInput, Textarea } from '../components/ui/Input';
 import { StatusBadge, Badge } from '../components/ui/Badge';
 import { Modal } from '../components/ui/Modal';
 import { EmptyState } from '../components/ui/EmptyState';
+import { WhatsAppConfirmationModal } from '../components/shared/WhatsAppConfirmationModal';
 import {
   getMembershipStatus,
   getDaysDifference,
@@ -20,7 +21,8 @@ import {
 import { exportMembersCSV } from '../utils/exportUtils';
 import {
   Plus, Eye, IndianRupee, RotateCw, ChevronLeft, ChevronRight,
-  Download, Users, CheckCircle2, User, Phone, Mail, MapPin, AlertCircle
+  Download, Users, CheckCircle2, User, Phone, Mail, MapPin, AlertCircle,
+  MessageSquare
 } from 'lucide-react';
 
 export default function Members() {
@@ -47,6 +49,8 @@ export default function Members() {
   const [planFilter, setPlanFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [showAddModal, setShowAddModal] = useState(false);
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [registeredMemberForWhatsApp, setRegisteredMemberForWhatsApp] = useState(null);
   const [successToast, setSuccessToast] = useState(null);
   const [exportNotice, setExportNotice] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -227,6 +231,12 @@ export default function Members() {
       setSuccessToast(`Member ${formData.name.trim()} successfully registered! Member Code: ${result.member_code}${receiptNotice}`);
       setTimeout(() => setSuccessToast(null), 7000);
 
+      // Prompt owner/admin with WhatsApp registration confirmation modal
+      if (isAdmin) {
+        setRegisteredMemberForWhatsApp(result);
+        setShowWhatsAppModal(true);
+      }
+
       // Reset form and generate fresh idempotency key for next registration
       setFormData({
         name: '',
@@ -354,14 +364,27 @@ export default function Members() {
 
       {/* Success Notification */}
       {successToast && (
-        <div className="p-3.5 rounded-xl bg-[#E8F5EE] border border-[#16845B]/25 text-[#16845B] text-xs font-semibold flex items-center justify-between gap-2 shadow-xs">
+        <div className="p-3.5 rounded-xl bg-[#E8F5EE] border border-[#16845B]/25 text-[#16845B] text-xs font-semibold flex items-center justify-between gap-3 shadow-xs">
           <div className="flex items-center gap-2">
             <CheckCircle2 size={16} className="shrink-0" />
             <span>{successToast}</span>
           </div>
-          <button onClick={() => setSuccessToast(null)} className="text-[#16845B] hover:text-[#126b49] cursor-pointer">
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            {isAdmin && registeredMemberForWhatsApp && (
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={MessageSquare}
+                onClick={() => setShowWhatsAppModal(true)}
+                className="text-xs h-7 px-2.5 font-medium"
+              >
+                Send WhatsApp
+              </Button>
+            )}
+            <button onClick={() => setSuccessToast(null)} className="text-[#16845B] hover:text-[#126b49] cursor-pointer" aria-label="Dismiss">
+              ✕
+            </button>
+          </div>
         </div>
       )}
 
@@ -906,6 +929,21 @@ export default function Members() {
           />
         </form>
       </Modal>
+
+      {/* WhatsApp Registration Confirmation Modal */}
+      {registeredMemberForWhatsApp && (
+        <WhatsAppConfirmationModal
+          isOpen={showWhatsAppModal}
+          onClose={() => setShowWhatsAppModal(false)}
+          member={registeredMemberForWhatsApp}
+          membershipPlans={membershipPlans}
+          isAdmin={isAdmin}
+          onDispatched={() => {
+            setSuccessToast(`WhatsApp chat opened for ${registeredMemberForWhatsApp.name}!`);
+            setTimeout(() => setSuccessToast(null), 7000);
+          }}
+        />
+      )}
     </div>
   );
 }
